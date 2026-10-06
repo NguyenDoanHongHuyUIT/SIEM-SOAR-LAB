@@ -1,0 +1,3 @@
+# One row per on-demand session (lab up -> lab down). hours = wall clock the instances were running.
+start,hours,manager_type,sensor_type,notes
+2026-10-12T09:00:00Z,4,t3.large,t3.small,week 4 Wazuh setup

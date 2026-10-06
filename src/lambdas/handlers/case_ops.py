@@ -47,10 +47,12 @@ def _fail_safe(store, case, event):
             raise
     case = store.get_case(case["case_id"])
     try:
-        notify_case(case, "failed", extra=(f"Error: {err.get('Error', '?')} - {str(err.get('Cause', ''))[:300]}\n"
-                                           f"Safe state: {safe}"))
+        sent = notify_case(case, "failed", extra=(f"Error: {err.get('Error', '?')} - {str(err.get('Cause', ''))[:300]}\n"
+                                                  f"Safe state: {safe}"))
+        store.audit(case["case_id"], "notified:failed", "system", sent)
     except (RuntimeError, ClientError):
         log.error("fail-safe notification failed", exc_info=True)
+        store.audit(case["case_id"], "notify_failed", "system", {"kind": "failed"})
     return {"status": "FAILED", "safe_state": safe}
 
 

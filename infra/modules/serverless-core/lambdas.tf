@@ -186,6 +186,8 @@ locals {
     IAM_TARGET_PREFIX        = var.iam_target_prefix
     SLACK_CHANNEL            = var.slack_channel
     LOG_LEVEL                = "INFO"
+    LAB_FAULTS_ENABLED       = tostring(var.enable_fault_injection)
+    FAULT_INJECT             = ""
   }
 
   lab_env = {

@@ -8,10 +8,10 @@ import urllib.parse
 
 import boto3
 import pytest
-
 from handlers import ingest as ingest_handler
 from handlers import lab_session, notify, slack_interact
 from siemsoar import notifier, slack, ssm
+
 from tests.fixtures import events as ev
 
 R = "ap-southeast-1"
@@ -158,3 +158,17 @@ def test_lab_session_caps_hours(lab_env):
     assert sched["ScheduleExpression"].startswith("at(")
     assert out["auto_stop_at"][:10] >= time.strftime("%Y-%m-%d", time.gmtime())
     assert os.environ["LAB_NAME_PREFIX"] == "siemsoar"
+
+
+def test_injected_slack_fault_uses_sns_fallback(store, sfn, monkeypatch):
+    c = boto3.client("ssm", region_name=R)
+    c.put_parameter(Name="/siemsoar/slack/bot_token", Value="xoxb-1", Type="SecureString")
+    c.put_parameter(Name="/siemsoar/slack/channel", Value="C123", Type="String")
+    ssm.clear()
+    called = []
+    monkeypatch.setattr(slack, "post_message", lambda *a, **k: called.append(1) or {"ok": True})
+    monkeypatch.setenv("LAB_FAULTS_ENABLED", "true")
+    monkeypatch.setenv("FAULT_INJECT", "notify.slack")
+    cid = ingest_handler.handler(ev.guardduty_instance())["case_id"]
+    out = notify.handler({"op": "request", "gate": "approval", "task_token": "T", "state": {"case_id": cid, "config": {}}})
+    assert out == {"slack": False, "sns": True} and not called

@@ -50,7 +50,7 @@ def _split_groups(text: str | None) -> list[str]:
 
 def parse_wazuh_xml(text: str) -> dict[int, WazuhRule]:
     """Rule files are XML fragments with several top level <group> elements: wrap them in a root."""
-    root = ET.fromstring(f"<root>{text}</root>")
+    root = ET.fromstring(f"<root>{text}</root>")  # noqa: S314 - rule files are repo-owned, reviewed in PRs
     rules: dict[int, WazuhRule] = {}
     for container in root.findall("group"):
         cgroups = _split_groups(container.get("name"))

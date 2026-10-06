@@ -1,0 +1,10 @@
+id: net-traversal
+title: Network - HTTP path traversal replay (active rule -> case)
+kind: pcap_replay
+target: sensor
+malicious: true
+techniques: [T1190]
+pcap: traversal.pcap
+expect:
+  - {source: suricata, rule_id: "110001", case: true}
+settle_seconds: 120

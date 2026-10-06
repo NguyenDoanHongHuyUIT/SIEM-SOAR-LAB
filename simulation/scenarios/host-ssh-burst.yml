@@ -1,0 +1,13 @@
+id: host-ssh-burst
+title: "Credential access - SSH failure burst (rule is shadow, so logged but no case)"
+kind: ssm_shell
+target: sensor
+malicious: true
+techniques: [T1110.001]
+commands:
+  - 'for i in 1 2 3 4 5 6 7 8; do ssh -o BatchMode=yes -o ConnectTimeout=2 -o StrictHostKeyChecking=no siemsoar_nouser_{short}@127.0.0.1 true >/dev/null 2>&1 || true; done'
+  - 'logger -t siemsoar-sim "technique=T1110.001 run_id={run_id}"'
+cleanup: []
+expect:
+  - {source: wazuh, rule_id: "100120", case: false}
+settle_seconds: 120

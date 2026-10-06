@@ -339,3 +339,17 @@ def test_wazuh_fim_alert_end_to_end(store, sfn):
     case = store.get_case(cid)
     assert outcome == "Succeed" and case["source"] == "wazuh" and case["run_id"] == "run-20261006-01"
     assert lab.sgs() == [lab.sg]
+
+
+def test_injected_fault_after_isolation_matches_the_robustness_scenario(store, sfn, monkeypatch):
+    """Same seam the simulation runner uses (FAULT_INJECT on the contain function)."""
+    monkeypatch.setenv("LAB_FAULTS_ENABLED", "true")
+    monkeypatch.setenv("FAULT_INJECT", "contain.revoke_sessions")
+    lab = Lab()
+    cid = start(store, ev.guardduty_instance(lab.iid))
+    outcome, _, visited = asl_runner.run(cid, CFG, gates("approve"))
+    case = store.get_case(cid)
+    assert outcome == "Fail:CaseFailedSafe" and visited[-2:] == ["FailSafe", "CaseFailed"]
+    assert case["failure_error"] == "InjectedFault" and "CONTAINED" in case["safe_state"]
+    assert lab.sgs() != [lab.sg]  # isolation (done before the fault) is kept
+    assert "notified:failed" in audit_actions(store, cid)

@@ -1,0 +1,15 @@
+id: host-useradd
+title: Persistence - create a local account (Atomic Red Team T1136.001 equivalent)
+kind: ssm_shell
+target: sensor
+malicious: true
+techniques: [T1136.001]
+commands:
+  - 'logger -t siemsoar-sim "technique=T1136.001 run_id={run_id}"'
+  - 'useradd -m -s /usr/sbin/nologin siemsoar_sim_{short} || true'
+cleanup:
+  - 'userdel -r siemsoar_sim_{short} || true'
+expect:
+  - {source: wazuh, rule_id: "100110", case: true}
+  - {source: wazuh, rule_id: "100130", case: true}
+settle_seconds: 120

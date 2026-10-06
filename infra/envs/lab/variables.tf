@@ -49,3 +49,8 @@ variable "restore_timeout_seconds" {
   type    = number
   default = 86400
 }
+
+variable "enable_fault_injection" {
+  type    = bool
+  default = false
+}

@@ -94,3 +94,9 @@ variable "evidence_retention_days" {
   type    = number
   default = 7
 }
+
+variable "enable_fault_injection" {
+  type        = bool
+  default     = false
+  description = "Allow the simulation runner to inject faults (robustness scenarios). Keep false outside test sessions."
+}

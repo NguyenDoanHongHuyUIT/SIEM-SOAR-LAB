@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from siemsoar import evidence, response
+from siemsoar import evidence, faults, response
 from siemsoar.config import settings
 from siemsoar.errors import VerificationFailed
 from siemsoar.schema import PLAN_EC2
@@ -31,6 +31,7 @@ def _isolate(case, event, store):
 
 
 def _revoke_ec2_sessions(case, event, store):
+    faults.maybe_fail("contain.revoke_sessions")
     pre = _pre(case["case_id"])
     if not pre.get("role_name"):
         return {"skipped": "no instance role"}

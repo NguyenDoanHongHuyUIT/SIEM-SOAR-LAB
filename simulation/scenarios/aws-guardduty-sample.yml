@@ -1,0 +1,12 @@
+id: aws-guardduty-sample
+title: AWS technique - GuardDuty sample findings (cloud path)
+kind: guardduty_sample
+malicious: true
+techniques: [T1110.001, T1046]
+finding_types:
+  - 'UnauthorizedAccess:EC2/SSHBruteForce'
+  - 'Recon:EC2/PortProbeUnprotectedPort'
+expect:
+  - {source: guardduty, rule_id: 'UnauthorizedAccess:EC2/SSHBruteForce', case: true}
+  - {source: guardduty, rule_id: 'Recon:EC2/PortProbeUnprotectedPort', case: true}
+settle_seconds: 300

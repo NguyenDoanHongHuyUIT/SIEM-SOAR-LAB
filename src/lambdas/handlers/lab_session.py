@@ -15,7 +15,6 @@ import os
 from datetime import timedelta
 
 from botocore.exceptions import ClientError
-
 from siemsoar import aws
 from siemsoar.util import get_logger, now
 

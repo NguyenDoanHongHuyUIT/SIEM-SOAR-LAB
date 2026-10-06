@@ -115,15 +115,25 @@ class CaseStore:
         self.audit(case_id, f"status:{target.value}", actor, {"from": previous, **(detail or {})})
         return {"from": previous, "to": target.value, "at": ts}
 
-    def list_cases(self, status: str | None = None, limit: int = 100) -> list[dict]:
+    def _paginate(self, method: str, **kwargs) -> list[dict]:
+        items: list[dict] = []
+        fn = getattr(self.table, method)
+        while True:
+            res = fn(**kwargs)
+            items += res.get("Items", [])
+            if "LastEvaluatedKey" not in res:
+                return items
+            kwargs["ExclusiveStartKey"] = res["LastEvaluatedKey"]
+
+    def list_cases(self, status: str | None = None, limit: int = 1000) -> list[dict]:
         if status:
-            res = self.table.query(IndexName="status-index", ScanIndexForward=False, Limit=limit,
+            items = self._paginate("query", IndexName="status-index", ScanIndexForward=False,
                                    KeyConditionExpression="#s = :s", ExpressionAttributeNames={"#s": "status"},
                                    ExpressionAttributeValues={":s": status})
         else:
-            res = self.table.scan(FilterExpression="sk = :m", Limit=1000,
-                                  ExpressionAttributeValues={":m": "META"})
-        return from_ddb(res.get("Items", []))[:limit]
+            items = self._paginate("scan", FilterExpression="sk = :m AND begins_with(pk, :c)",
+                                   ExpressionAttributeValues={":m": "META", ":c": "CASE#"})
+        return from_ddb(items)[:limit]
 
     def cases_for_resource(self, resource_id: str, since: str | None = None) -> list[dict]:
         key = "resource_id = :r" + (" AND created_at > :t" if since else "")
@@ -238,9 +248,8 @@ class CaseStore:
         self.table.put_item(Item=to_ddb({**run, "pk": f"RUN#{run['run_id']}", "sk": "META"}))
 
     def list_runs(self) -> list[dict]:
-        res = self.table.scan(FilterExpression="begins_with(pk, :p) AND sk = :m",
-                              ExpressionAttributeValues={":p": "RUN#", ":m": "META"})
-        return from_ddb(res.get("Items", []))
+        return from_ddb(self._paginate("scan", FilterExpression="begins_with(pk, :p) AND sk = :m",
+                                       ExpressionAttributeValues={":p": "RUN#", ":m": "META"}))
 
     def is_terminal_case(self, case_id: str) -> bool:
         return is_terminal(self.get_case(case_id)["status"])

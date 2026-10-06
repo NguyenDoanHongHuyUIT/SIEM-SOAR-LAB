@@ -1,0 +1,5 @@
+# Baseline = GuardDuty default (email only) + operator isolates with the AWS Console. MEASURE it, do not assume it.
+# One row per manual drill; copy to baseline.csv. Times in seconds, measured with a stopwatch from the email arriving.
+scenario,run,seconds_to_notice,seconds_to_contain,manual_steps,errors,notes
+aws-guardduty-sample,1,,,,,
+host-useradd,1,,,,,

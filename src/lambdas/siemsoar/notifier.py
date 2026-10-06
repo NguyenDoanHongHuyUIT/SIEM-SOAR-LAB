@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from botocore.exceptions import ClientError
 
-from . import aws, slack
+from . import aws, faults, slack
 from .config import settings
 from .ssm import get_param
 from .util import get_logger
@@ -28,6 +28,7 @@ def slack_post(case: dict, text: str, blocks: list[dict]) -> bool:
         log.warning("slack not configured; using SNS fallback only")
         return False
     try:
+        faults.maybe_fail("notify.slack")
         slack.post_message(token, channel, text, blocks)
         return True
     except Exception:

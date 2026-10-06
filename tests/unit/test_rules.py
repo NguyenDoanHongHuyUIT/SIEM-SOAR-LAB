@@ -238,8 +238,8 @@ def test_integration_roundtrip_matches_normalizer(tmp_path):
     """What the integration emits must be accepted by the ingest normaliser (contract test)."""
     import boto3
     from moto import mock_aws
-
     from siemsoar import schema
+
     from tests.fixtures import events as ev
     m = _load_integration()
     alert_file = tmp_path / "alert.json"

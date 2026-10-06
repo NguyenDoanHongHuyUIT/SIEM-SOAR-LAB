@@ -328,7 +328,10 @@ def tune(feedback: dict, min_cases: int = 3) -> list[str]:
         if n < min_cases:
             continue
         rate = fp / n
-        key = next((k for k in meta if k.endswith(f"-{rid}")), None)
+        candidates = [f"wazuh-{rid}"]
+        if str(rid).isdigit() and 110000 <= int(rid) < 120000:  # generated Suricata mapping rule -> sid
+            candidates.append(f"suricata-{9000000 + int(rid) - 110000}")
+        key = next((c for c in candidates if c in meta), None)
         state = meta.get(key, {}).get("state", "?")
         if rate >= 0.5 and state in ("active", "enforce"):
             suggestions.append(f"{key or rid}: FP rate {rate:.0%} over {n} cases -> demote to shadow "

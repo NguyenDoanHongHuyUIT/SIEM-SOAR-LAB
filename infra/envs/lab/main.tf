@@ -9,6 +9,7 @@ module "core" {
   monthly_budget_usd       = var.monthly_budget_usd
   approval_timeout_seconds = var.approval_timeout_seconds
   restore_timeout_seconds  = var.restore_timeout_seconds
+  enable_fault_injection   = var.enable_fault_injection
 }
 
 # On-demand plane: Wazuh manager + dashboard + lab EC2 (Wazuh agent, Suricata). Destroyed between sessions.
