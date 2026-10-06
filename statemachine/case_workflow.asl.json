@@ -1,0 +1,9 @@
+{
+  "Comment": "Case workflow skeleton",
+  "StartAt": "NotifyPlaceholder",
+  "States": {
+    "NotifyPlaceholder": { "Type": "Pass", "Next": "WaitApproval" },
+    "WaitApproval": { "Type": "Wait", "Seconds": 5, "Next": "Done" },
+    "Done": { "Type": "Succeed" }
+  }
+}

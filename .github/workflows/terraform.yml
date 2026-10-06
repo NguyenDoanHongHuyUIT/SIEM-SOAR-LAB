@@ -1,0 +1,45 @@
+name: terraform
+on:
+  pull_request:
+    paths: ["infra/**", "statemachine/**"]
+  push:
+    branches: [main]
+    paths: ["infra/**", "statemachine/**"]
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  TF_DIR: infra/envs/lab
+  TF_VAR_alert_email: ${{ vars.ALERT_EMAIL }}
+
+jobs:
+  plan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.PLAN_ROLE_ARN }}
+          aws-region: ap-southeast-1
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform -chdir=$TF_DIR init -input=false
+      - run: terraform -chdir=$TF_DIR fmt -check -recursive ../..
+      - run: terraform -chdir=$TF_DIR validate
+      - run: terraform -chdir=$TF_DIR plan -input=false
+
+  apply:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: lab
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.APPLY_ROLE_ARN }}
+          aws-region: ap-southeast-1
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform -chdir=$TF_DIR init -input=false
+      - run: terraform -chdir=$TF_DIR apply -input=false -auto-approve
