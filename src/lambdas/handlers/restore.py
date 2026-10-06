@@ -10,7 +10,7 @@ from siemsoar import evidence, response
 from siemsoar.config import settings
 from siemsoar.errors import VerificationFailed
 from siemsoar.schema import PLAN_EC2
-from siemsoar.states import Status
+from siemsoar.states import TERMINAL, Status
 from siemsoar.util import iso, parse_iso
 
 from handlers._common import dry_run_of, load, state_of
@@ -36,7 +36,7 @@ def _validate(case, event, store):
     if new_alerts > 0:
         reasons.append(f"{new_alerts} new alert(s) merged into this case after isolation")
     later = [c["case_id"] for c in store.cases_for_resource(case["resource_id"], since=since)
-             if c["case_id"] != cid and c["status"] not in {"DISMISSED", "RESTORED", "EXPIRED"}] if since else []
+             if c["case_id"] != cid and c["status"] not in TERMINAL] if since else []
     if later:
         reasons.append(f"open related case(s) on same resource: {', '.join(later)}")
 

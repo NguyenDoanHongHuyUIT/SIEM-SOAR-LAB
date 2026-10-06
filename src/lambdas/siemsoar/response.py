@@ -204,10 +204,14 @@ def restore_user_sessions(user: str, dry_run: bool = False) -> dict:
 
 
 def rotate_key(user: str, old_key_id: str, secret_prefix: str, dry_run: bool = False) -> dict:
-    """Create a replacement key, store it in Secrets Manager (never in logs/Step Functions), drop the old one."""
+    """Delete the exposed key, issue a replacement and store it in Secrets Manager (never in logs/Step Functions).
+
+    The old key goes first: it is compromised, and deleting it also frees a slot (IAM allows two keys per user).
+    """
     if dry_run:
         return {"user": user, "rotated": False, "dry_run": True}
     iam, sm = aws.client("iam"), aws.client("secretsmanager")
+    iam.delete_access_key(UserName=user, AccessKeyId=old_key_id)
     new = iam.create_access_key(UserName=user)["AccessKey"]
     name = f"{secret_prefix}/rotated-keys/{user}"
     payload = json.dumps({"AccessKeyId": new["AccessKeyId"], "SecretAccessKey": new["SecretAccessKey"]})
@@ -215,7 +219,6 @@ def rotate_key(user: str, old_key_id: str, secret_prefix: str, dry_run: bool = F
         arn = sm.create_secret(Name=name, SecretString=payload)["ARN"]
     except sm.exceptions.ResourceExistsException:
         arn = sm.put_secret_value(SecretId=name, SecretString=payload)["ARN"]
-    iam.delete_access_key(UserName=user, AccessKeyId=old_key_id)
     return {"user": user, "rotated": True, "new_access_key_id": new["AccessKeyId"], "secret_arn": arn,
             "deleted_access_key_id": old_key_id}
 

@@ -353,3 +353,34 @@ def test_injected_fault_after_isolation_matches_the_robustness_scenario(store, s
     assert case["failure_error"] == "InjectedFault" and "CONTAINED" in case["safe_state"]
     assert lab.sgs() != [lab.sg]  # isolation (done before the fault) is kept
     assert "notified:failed" in audit_actions(store, cid)
+
+
+def test_second_alert_on_already_isolated_host_is_refused_not_double_contained(store, sfn):
+    lab = Lab()
+    first = start(store, ev.guardduty_instance(lab.iid, fid="f1"))
+    out1 = []
+
+    def cb(gate, data, token):
+        if gate == "restore":
+            # while case 1 holds the host in isolation, a Wazuh alert opens case 2 on the same instance
+            event = ev.clone(ev.WAZUH_FIM)
+            event["detail"]["agent"]["name"] = lab.iid
+            second = start(store, event)
+            out1.append(asl_runner.run(second, CFG, gates("approve")))
+        queue(gate, data, token)
+
+    queue = gates("approve", "restore_fp")
+    asl_runner.run(first, CFG, cb)
+    outcome, _, _ = out1[0]
+    assert outcome == "Fail:CaseFailedSafe"
+    failed = store.list_cases("FAILED")[0]
+    assert failed["failure_error"] == "PreflightFailed" and "already isolated by case" in failed["failure_cause"]
+    assert store.get_case(first)["status"] == "RESTORED" and lab.sgs() == [lab.sg]
+
+
+def test_iam_rotation_works_when_user_already_has_two_keys(store, sfn, iam_user):
+    iam = boto3.client("iam", region_name=R)
+    iam.create_access_key(UserName="lab-alice")  # second key: IAM's per-user limit is now reached
+    cid = start(store, ev.guardduty_key(key=iam_user))
+    outcome, _, _ = asl_runner.run(cid, CFG, gates("approve", "restore_tp"))
+    assert outcome == "Succeed" and iam_user not in response.list_keys("lab-alice")

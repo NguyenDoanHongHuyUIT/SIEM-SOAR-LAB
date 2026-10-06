@@ -25,7 +25,13 @@ bash "$BOOT/scripts/deploy_rules.sh" sensor current || log "no rule release yet,
 systemctl enable suricata
 systemctl restart suricata
 
-# ---- Wazuh agent
+# ---- Wazuh agent. The manager installs for ~10-15 min after boot: wait until it accepts enrolment instead of
+# letting the package post-install fail to register.
+log "waiting for the Wazuh manager (${MANAGER_IP}:1515)"
+for _ in $(seq 1 120); do
+  if timeout 3 bash -c "</dev/tcp/${MANAGER_IP}/1515" 2>/dev/null; then break; fi
+  sleep 15
+done
 curl -fsS https://packages.wazuh.com/key/GPG-KEY-WAZUH | gpg --no-default-keyring \
   --keyring gnupg-ring:/usr/share/keyrings/wazuh.gpg --import
 chmod 644 /usr/share/keyrings/wazuh.gpg

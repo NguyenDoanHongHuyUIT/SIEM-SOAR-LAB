@@ -33,6 +33,10 @@ def handler(event, context=None):
             raise PreflightFailed(f"instance {iid} carries {cfg.protected_tag}=true")
         if info["tags"].get(cfg.zone_tag) != "workload":
             raise PreflightFailed(f"instance {iid} is not in zone=workload (tag {cfg.zone_tag})")
+        holder = info["tags"].get(response.CASE_TAG)
+        if holder and holder != case["case_id"]:
+            # a second alert on a host that is already contained: its "pre-action state" would be the isolation SG
+            raise PreflightFailed(f"instance {iid} is already isolated by case {holder}; decide on that case")
         if not response.check_modify_permission(iid):
             raise PreflightFailed("EC2 DryRun: SOAR role lacks ModifyInstanceAttribute on target")
         checks = {"target": iid, "zone": "workload", "ec2_dry_run": "ok"}
