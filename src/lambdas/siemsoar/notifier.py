@@ -24,7 +24,7 @@ def slack_post(case: dict, text: str, blocks: list[dict]) -> bool:
     prefix = settings().name_prefix
     token = get_param(f"/{prefix}/slack/bot_token")
     channel = settings().slack_channel or get_param(f"/{prefix}/slack/channel")
-    if not token or token == "CHANGE_ME" or not channel:
+    if not token or token == "CHANGE_ME" or not channel or channel == "CHANGE_ME":
         log.warning("slack not configured; using SNS fallback only")
         return False
     try:

@@ -1,0 +1,25 @@
+id: wazuh-100130
+engine: wazuh
+rule_id: 100130
+name: Simulated adversary technique marker
+state: active
+response: none
+mitre: [T1059.004]
+tactic: Execution
+owner: nguyen-doan-hong-huy
+created: 2026-10-06
+data_source: syslog marker written by simulation/ scenarios (logger -t siemsoar-sim)
+description: >
+  Deterministic detection used to test the whole pipeline (Wazuh -> EventBridge -> case -> Slack) without
+  performing a disruptive action. Carries run_id for ground-truth labelling.
+expected_fp: None outside simulation runs; any hit without a simulation run is itself a finding.
+tests:
+  - name: marker with run id
+    expect: match
+    event: {program_name: siemsoar-sim, full_log: "Oct  6 10:00:00 host siemsoar-sim: technique=T1059.004 run_id=run-demo-01"}
+  - name: other program
+    expect: no_match
+    event: {program_name: cron, full_log: "Oct  6 10:00:00 host cron: technique=T1059.004"}
+  - name: marker without technique
+    expect: no_match
+    event: {program_name: siemsoar-sim, full_log: "Oct  6 10:00:00 host siemsoar-sim: hello"}

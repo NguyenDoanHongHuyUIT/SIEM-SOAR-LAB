@@ -1,0 +1,25 @@
+id: wazuh-100101
+engine: wazuh
+rule_id: 100101
+name: Canary directory changed
+state: shadow
+response: none
+mitre: [T1565.001]
+tactic: Impact
+owner: nguyen-doan-hong-huy
+created: 2026-10-06
+data_source: Wazuh syscheck (FIM) real-time on /srv/lab
+description: >
+  Canary directory used by the simulation. Starts in shadow to show the lifecycle: the alert is recorded
+  in Wazuh but does not create cases until promoted to active through a pull request.
+expected_fp: Anyone deliberately touching /srv/lab during a session.
+tests:
+  - name: file added
+    expect: match
+    event: {decoder: syscheck, parents: [554], fields: {file: /srv/lab/canary.txt}}
+  - name: file modified
+    expect: match
+    event: {decoder: syscheck, parents: [550], fields: {file: /srv/lab/notes/a.txt}}
+  - name: outside canary dir
+    expect: no_match
+    event: {decoder: syscheck, parents: [550], fields: {file: /srv/other/a.txt}}

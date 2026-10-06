@@ -1,0 +1,2 @@
+# cp backend.hcl.example backend.hcl && edit  (backend.hcl is git-ignored via *.hcl)
+bucket = "siemsoar-tfstate-<ACCOUNT_ID>"

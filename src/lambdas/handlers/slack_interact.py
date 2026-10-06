@@ -47,7 +47,8 @@ def handler(event, context=None):
         return _resp(200)
 
     user = payload["user"]["id"]
-    approvers = {a.strip() for a in (get_param(f"/{prefix}/slack/approver_ids", "") or "").split(",") if a.strip()}
+    raw_approvers = get_param(f"/{prefix}/slack/approver_ids", "") or ""
+    approvers = {a.strip() for a in raw_approvers.split(",") if a.strip() and a.strip() != "CHANGE_ME"}
     case_id, gate, decision = (payload["actions"][0]["value"].split("|") + ["", "", ""])[:3]
     store = CaseStore()
     if user not in approvers:

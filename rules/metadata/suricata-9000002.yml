@@ -1,0 +1,25 @@
+id: suricata-9000002
+engine: suricata
+rule_id: 9000002
+level: 8
+name: sqlmap user agent
+state: shadow
+response: none
+mitre: [T1190]
+tactic: Initial Access
+owner: nguyen-doan-hong-huy
+created: 2026-10-06
+data_source: Suricata EVE JSON via Wazuh agent
+description: sqlmap scanner User-Agent. Shadow while its noise level is measured.
+expected_fp: Authorised penetration tests from the lab owner.
+tests:
+  - name: sqlmap agent
+    expect: match
+    payload: {buffer: http.user_agent, value: "sqlmap/1.7.2#stable (https://sqlmap.org)"}
+  - name: case insensitive
+    expect: match
+    payload: {buffer: http.user_agent, value: "SQLMap"}
+  - name: browser agent
+    expect: no_match
+    payload: {buffer: http.user_agent, value: "Mozilla/5.0 (X11; Linux x86_64)"}
+pcap: {file: sqlmap.pcap, expect_sids: [9000002]}

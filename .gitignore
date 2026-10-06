@@ -1,9 +1,22 @@
+# terraform
 *.tfstate
 *.tfstate.*
 .terraform/
 .terraform.lock.hcl.bak
 *.tfvars
 !*.tfvars.example
+*.hcl
+!*.hcl.example
+.build/
+# secrets
 *.pem
 .env
+# python
 __pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.venv/
+# generated
+reports/
+dist/

@@ -1,0 +1,22 @@
+<!-- BEGIN SIEMSOAR (appended by bootstrap_sensor.sh) -->
+<ossec_config>
+  <!-- Suricata EVE JSON -> Wazuh (decoded by the built-in json/suricata decoders) -->
+  <localfile>
+    <log_format>json</log_format>
+    <location>/var/log/suricata/eve.json</location>
+  </localfile>
+
+  <!-- File integrity monitoring: system files + a lab canary directory (real-time) -->
+  <syscheck>
+    <directories realtime="yes" check_all="yes" report_changes="yes">/srv/lab</directories>
+    <directories realtime="yes" check_all="yes">/etc/passwd,/etc/shadow,/etc/sudoers,/etc/ssh/sshd_config</directories>
+    <frequency>3600</frequency>
+  </syscheck>
+
+  <!-- Simulation runs tag events with run_id=<id> through syslog so ground truth can be joined later -->
+  <localfile>
+    <log_format>syslog</log_format>
+    <location>/var/log/syslog</location>
+  </localfile>
+</ossec_config>
+<!-- END SIEMSOAR -->

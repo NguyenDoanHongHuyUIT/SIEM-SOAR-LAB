@@ -1,0 +1,25 @@
+id: suricata-9000001
+engine: suricata
+rule_id: 9000001
+level: 10
+name: HTTP path traversal
+state: active
+response: none
+mitre: [T1190]
+tactic: Initial Access
+owner: nguyen-doan-hong-huy
+created: 2026-10-06
+data_source: Suricata EVE JSON via Wazuh agent
+description: Directory traversal sequence in the HTTP URI.
+expected_fp: Applications that legitimately use relative paths in query strings.
+tests:
+  - name: traversal uri
+    expect: match
+    payload: {buffer: http.uri, value: "/download?file=../../etc/passwd"}
+  - name: clean uri
+    expect: no_match
+    payload: {buffer: http.uri, value: "/index.html"}
+  - name: traversal only in user agent
+    expect: no_match
+    payload: {buffer: http.user_agent, value: "../../"}
+pcap: {file: traversal.pcap, expect_sids: [9000001]}

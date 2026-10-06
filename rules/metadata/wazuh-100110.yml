@@ -1,0 +1,20 @@
+id: wazuh-100110
+engine: wazuh
+rule_id: 100110
+name: New local user account
+state: active
+response: ec2_isolate
+mitre: [T1136.001]
+tactic: Persistence
+owner: nguyen-doan-hong-huy
+created: 2026-10-06
+data_source: auth.log / syslog (adduser, useradd) via Wazuh agent
+description: A local account was created on the lab host (persistence technique).
+expected_fp: Planned provisioning of lab users.
+tests:
+  - name: useradd event
+    expect: match
+    event: {decoder: adduser, parents: [5902], full_log: "useradd[1234]: new user: name=backdoor, UID=1001 run_id=run-demo-01"}
+  - name: user-added rule did not fire
+    expect: no_match
+    event: {decoder: adduser, parents: [5901], full_log: "groupadd[1234]: new group: name=ops, GID=1001"}
