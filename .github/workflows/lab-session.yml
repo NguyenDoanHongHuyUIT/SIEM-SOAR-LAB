@@ -1,0 +1,74 @@
+name: lab-session
+# Switch the on-demand plane (Wazuh manager + dashboard + lab EC2) on for a working session, off afterwards.
+# `up` also arms a hard auto-stop timer (EventBridge Scheduler -> lab_session Lambda) so a forgotten session cannot burn credit.
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        type: choice
+        options: [up, extend, down]
+        default: up
+      hours:
+        description: "session length (auto-stop timer), max 12"
+        default: "4"
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: terraform-lab
+  cancel-in-progress: false
+
+env:
+  TF_DIR: infra/envs/lab
+  AWS_REGION: ap-southeast-1
+  TF_VAR_alert_email: ${{ vars.ALERT_EMAIL }}
+  TF_VAR_slack_channel: ${{ vars.SLACK_CHANNEL }}
+  TF_VAR_dry_run: ${{ vars.DRY_RUN || 'true' }}
+
+jobs:
+  session:
+    runs-on: ubuntu-latest
+    environment: lab
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.APPLY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.5"
+          terraform_wrapper: false
+      - run: terraform -chdir=$TF_DIR init -input=false -backend-config="bucket=${{ vars.TFSTATE_BUCKET }}"
+
+      - name: down - stop timer + instances first, then destroy the plane
+        if: inputs.action == 'down'
+        run: |
+          aws lambda invoke --function-name siemsoar-lab_session --payload '{"action":"stop"}' \
+            --cli-binary-format raw-in-base64-out /dev/stdout || true
+          terraform -chdir=$TF_DIR apply -input=false -auto-approve -var lab_enabled=false
+
+      - name: up - create/refresh the plane
+        if: inputs.action == 'up'
+        run: terraform -chdir=$TF_DIR apply -input=false -auto-approve -var lab_enabled=true
+
+      - name: up/extend - arm the auto-stop timer
+        if: inputs.action != 'down'
+        run: |
+          aws lambda invoke --function-name siemsoar-lab_session \
+            --payload "{\"action\":\"$( [ '${{ inputs.action }}' = extend ] && echo extend || echo start )\",\"hours\":${{ inputs.hours }}}" \
+            --cli-binary-format raw-in-base64-out out.json
+          cat out.json
+
+      - name: Session summary
+        if: inputs.action != 'down'
+        run: |
+          {
+            echo '### Lab is up'
+            echo "Auto-stop in ${{ inputs.hours }} h. Wazuh needs ~10-15 min to finish installing on first boot."
+            echo '```'
+            terraform -chdir=$TF_DIR output -raw lab 2>/dev/null || terraform -chdir=$TF_DIR output lab
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

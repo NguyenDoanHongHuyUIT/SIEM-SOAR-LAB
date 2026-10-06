@@ -5,8 +5,7 @@
 .terraform.lock.hcl.bak
 *.tfvars
 !*.tfvars.example
-*.hcl
-!*.hcl.example
+backend.hcl
 .build/
 # secrets
 *.pem
@@ -20,3 +19,4 @@ __pycache__/
 # generated
 reports/
 dist/
+.terraform.lock.hcl
