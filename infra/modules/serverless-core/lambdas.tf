@@ -15,15 +15,23 @@ locals {
   ssm_arn  = "arn:aws:ssm:${local.region}:${local.account_id}:parameter/${var.name_prefix}/slack/*"
   lab_role = "${local.iam_arn}:role/${var.name_prefix}-lab-*"
 
+  zone_condition = {
+    test     = "StringEquals"
+    variable = "aws:ResourceTag/siemsoar:zone"
+    values   = ["workload"]
+  }
+
   table_arns = [aws_dynamodb_table.cases.arn, "${aws_dynamodb_table.cases.arn}/index/*"]
 
   st = {
     ddb = {
-      actions   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem", "dynamodb:Query"]
+      actions   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem"]
       resources = local.table_arns
     }
-    sns = { actions = ["sns:Publish"], resources = [aws_sns_topic.notify.arn] }
-    ssm = { actions = ["ssm:GetParameter"], resources = [local.ssm_arn] }
+    ddb_delete = { actions = ["dynamodb:DeleteItem"], resources = [aws_dynamodb_table.cases.arn] }
+    ddb_query  = { actions = ["dynamodb:Query"], resources = local.table_arns }
+    sns        = { actions = ["sns:Publish"], resources = [aws_sns_topic.notify.arn] }
+    ssm        = { actions = ["ssm:GetParameter"], resources = [local.ssm_arn] }
     kms_ssm = {
       actions   = ["kms:Decrypt"]
       resources = ["*"]
@@ -38,49 +46,77 @@ locals {
       actions   = ["s3:PutObject", "s3:GetObject"]
       resources = ["${aws_s3_bucket.evidence.arn}/cases/*"]
     }
-    s3_case_ro = { actions = ["s3:GetObject"], resources = ["${aws_s3_bucket.evidence.arn}/cases/*"] }
-    s3_list    = { actions = ["s3:ListBucket"], resources = [aws_s3_bucket.evidence.arn] }
-    ec2_read = {
-      actions   = ["ec2:DescribeInstances", "ec2:DescribeSecurityGroups", "ec2:DescribeVolumes", "ec2:DescribeSnapshots"]
-      resources = ["*"]
+    s3_case_ro  = { actions = ["s3:GetObject"], resources = ["${aws_s3_bucket.evidence.arn}/cases/*"] }
+    s3_list     = { actions = ["s3:ListBucket"], resources = [aws_s3_bucket.evidence.arn] }
+    ec2_read    = { actions = ["ec2:DescribeInstances"], resources = ["*"] }
+    ec2_sg_read = { actions = ["ec2:DescribeSecurityGroups"], resources = ["*"] }
+    # mutating EC2 actions only on instances in the workload zone (tag), never on security-zone assets,
+    # and each handler gets only the verbs it uses
+    ec2_modify_instance = {
+      actions    = ["ec2:ModifyInstanceAttribute"]
+      resources  = ["${local.ec2_arn}:instance/*"]
+      conditions = [local.zone_condition]
     }
-    # mutating EC2 actions only on instances in the workload zone (tag), never on security-zone assets
-    ec2_workload_write = {
-      actions   = ["ec2:ModifyInstanceAttribute", "ec2:StopInstances", "ec2:StartInstances", "ec2:CreateTags", "ec2:DeleteTags"]
-      resources = ["${local.ec2_arn}:instance/*"]
-      conditions = [{
-        test     = "StringEquals"
-        variable = "aws:ResourceTag/siemsoar:zone"
-        values   = ["workload"]
-      }]
+    ec2_contain_instance = {
+      actions    = ["ec2:StopInstances", "ec2:CreateTags"]
+      resources  = ["${local.ec2_arn}:instance/*"]
+      conditions = [local.zone_condition]
+    }
+    ec2_restore_instance = {
+      actions    = ["ec2:StartInstances", "ec2:DeleteTags"]
+      resources  = ["${local.ec2_arn}:instance/*"]
+      conditions = [local.zone_condition]
     }
     ec2_sg_attach = {
-      actions   = ["ec2:ModifyInstanceAttribute", "ec2:CreateTags"]
+      actions   = ["ec2:ModifyInstanceAttribute"]
       resources = ["${local.ec2_arn}:security-group/*", "${local.ec2_arn}:network-interface/*"]
     }
-    ec2_sg_manage = {
-      actions   = ["ec2:CreateSecurityGroup", "ec2:RevokeSecurityGroupEgress"]
-      resources = ["${local.ec2_arn}:vpc/*", "${local.ec2_arn}:security-group/*"]
+    ec2_sg_create_vpc = { actions = ["ec2:CreateSecurityGroup"], resources = ["${local.ec2_arn}:vpc/*"] }
+    ec2_sg_create = {
+      actions   = ["ec2:CreateSecurityGroup"]
+      resources = ["${local.ec2_arn}:security-group/*"]
+      conditions = [{
+        test     = "StringEquals"
+        variable = "aws:RequestTag/ManagedBy"
+        values   = ["siemsoar"]
+      }]
+    }
+    ec2_sg_tag = {
+      actions   = ["ec2:CreateTags"]
+      resources = ["${local.ec2_arn}:security-group/*"]
+      conditions = [{
+        test     = "StringEquals"
+        variable = "ec2:CreateAction"
+        values   = ["CreateSecurityGroup"]
+      }]
+    }
+    ec2_sg_revoke_egress = {
+      actions   = ["ec2:RevokeSecurityGroupEgress"]
+      resources = ["${local.ec2_arn}:security-group/*"]
+      conditions = [{
+        test     = "StringEquals"
+        variable = "aws:ResourceTag/ManagedBy"
+        values   = ["siemsoar"]
+      }]
     }
     ec2_snapshot = {
       actions   = ["ec2:CreateSnapshot", "ec2:CreateTags"]
       resources = ["${local.ec2_arn}:volume/*", "arn:aws:ec2:${local.region}::snapshot/*"]
     }
     iam_user_read = {
-      actions   = ["iam:GetUser", "iam:ListAccessKeys", "iam:ListUserTags"]
+      actions   = ["iam:ListAccessKeys", "iam:ListUserTags"]
       resources = ["${local.iam_arn}:user/${var.iam_target_prefix}*"]
     }
-    iam_user_write = {
-      actions = [
-        "iam:UpdateAccessKey", "iam:PutUserPolicy", "iam:DeleteUserPolicy",
-        "iam:CreateAccessKey", "iam:DeleteAccessKey",
-      ]
+    iam_user_contain = {
+      actions   = ["iam:UpdateAccessKey", "iam:PutUserPolicy"]
       resources = ["${local.iam_arn}:user/${var.iam_target_prefix}*"]
     }
-    iam_role_session = {
-      actions   = ["iam:PutRolePolicy", "iam:DeleteRolePolicy", "iam:GetRolePolicy"]
-      resources = [local.lab_role]
+    iam_user_restore = {
+      actions   = ["iam:UpdateAccessKey", "iam:DeleteUserPolicy", "iam:CreateAccessKey", "iam:DeleteAccessKey"]
+      resources = ["${local.iam_arn}:user/${var.iam_target_prefix}*"]
     }
+    iam_role_contain = { actions = ["iam:PutRolePolicy"], resources = [local.lab_role] }
+    iam_role_restore = { actions = ["iam:DeleteRolePolicy", "iam:GetRolePolicy"], resources = [local.lab_role] }
     iam_profile_read = {
       actions   = ["iam:GetInstanceProfile"]
       resources = ["${local.iam_arn}:instance-profile/${var.name_prefix}-lab-*"]
@@ -90,7 +126,7 @@ locals {
       resources = ["arn:aws:secretsmanager:${local.region}:${local.account_id}:secret:/${var.name_prefix}/rotated-keys/*"]
     }
     sfn_start = { actions = ["states:StartExecution"], resources = [local.sfn_arn] }
-    sfn_task  = { actions = ["states:SendTaskSuccess", "states:SendTaskFailure"], resources = ["*"] }
+    sfn_task  = { actions = ["states:SendTaskSuccess"], resources = ["*"] }
     lab_ec2 = {
       actions   = ["ec2:StartInstances", "ec2:StopInstances"]
       resources = ["${local.ec2_arn}:instance/*"]
@@ -119,7 +155,7 @@ locals {
   functions = {
     ingest = {
       timeout    = 30, memory = 256
-      statements = [local.st.ddb, local.st.s3_raw, local.st.sfn_start]
+      statements = [local.st.ddb, local.st.ddb_delete, local.st.s3_raw, local.st.sfn_start]
     }
     enrich = {
       timeout    = 30, memory = 256
@@ -135,7 +171,7 @@ locals {
     }
     preflight = {
       timeout    = 30, memory = 256
-      statements = [local.st.ddb, local.st.ec2_read, local.st.ec2_workload_write, local.st.ec2_sg_attach, local.st.iam_user_read]
+      statements = [local.st.ddb, local.st.ec2_read, local.st.ec2_modify_instance, local.st.ec2_sg_attach, local.st.iam_user_read]
     }
     save_state = {
       timeout = 30, memory = 256
@@ -147,17 +183,18 @@ locals {
     contain = {
       timeout = 60, memory = 256
       statements = [
-        local.st.ddb, local.st.s3_case_ro, local.st.s3_list, local.st.ec2_read, local.st.ec2_workload_write,
-        local.st.ec2_sg_attach, local.st.ec2_sg_manage, local.st.ec2_snapshot, local.st.iam_user_read,
-        local.st.iam_user_write, local.st.iam_role_session, local.st.iam_profile_read,
+        local.st.ddb, local.st.s3_case_ro, local.st.s3_list, local.st.ec2_read, local.st.ec2_sg_read,
+        local.st.ec2_modify_instance, local.st.ec2_contain_instance, local.st.ec2_sg_attach,
+        local.st.ec2_sg_create_vpc, local.st.ec2_sg_create, local.st.ec2_sg_tag, local.st.ec2_sg_revoke_egress,
+        local.st.ec2_snapshot, local.st.iam_user_read, local.st.iam_user_contain, local.st.iam_role_contain,
       ]
     }
     restore = {
       timeout = 60, memory = 256
       statements = [
-        local.st.ddb, local.st.s3_case_ro, local.st.s3_list, local.st.ec2_read, local.st.ec2_workload_write,
-        local.st.ec2_sg_attach, local.st.iam_user_read, local.st.iam_user_write, local.st.iam_role_session,
-        local.st.iam_profile_read, local.st.secrets_rotate,
+        local.st.ddb, local.st.ddb_query, local.st.s3_case_ro, local.st.s3_list, local.st.ec2_read,
+        local.st.ec2_modify_instance, local.st.ec2_restore_instance, local.st.ec2_sg_attach, local.st.iam_user_read,
+        local.st.iam_user_restore, local.st.iam_role_restore, local.st.secrets_rotate,
       ]
     }
     case_ops = {

@@ -56,8 +56,10 @@ def instance_role_name(profile_arn: str | None) -> str | None:
     name = profile_arn.rsplit("/", 1)[-1]
     try:
         roles = aws.client("iam").get_instance_profile(InstanceProfileName=name)["InstanceProfile"]["Roles"]
-    except ClientError:
-        return None
+    except ClientError as err:
+        if err.response["Error"]["Code"] == "NoSuchEntity":
+            return None
+        raise  # AccessDenied etc. must surface: silently skipping session revocation would be fail-open
     return roles[0]["RoleName"] if roles else None
 
 
