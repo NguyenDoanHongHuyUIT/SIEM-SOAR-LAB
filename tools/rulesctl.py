@@ -173,6 +173,8 @@ def run_tests(root: Path | None = None) -> list[tuple[str, str, bool, str]]:
     results = []
     for mid, m in meta.items():
         for t in m.get("tests", []) or []:
+            if m["engine"] == "wazuh" and ("log" in t or "logs" in t) and not ("event" in t or "events" in t):
+                continue  # raw-log sample: executed on the real engine by `python -m tools.wazuh_logtest`
             if m["engine"] == "wazuh" and m["rule_id"] in wz:
                 ok, detail = eng.run_wazuh_test(wz[m["rule_id"]], t, wz)
             elif m["engine"] == "suricata" and m["rule_id"] in su:

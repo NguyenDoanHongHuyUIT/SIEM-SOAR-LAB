@@ -70,10 +70,15 @@ def attribute(case: dict, runs: list[dict]) -> tuple[dict | None, dict | None]:
     return None, None
 
 
-def classify(cases: list[dict], runs: list[dict]) -> dict:
-    """Ground-truth labelling. Returns per-rule counters and per-case labels."""
+def classify(cases: list[dict], runs: list[dict], canary_rules: frozenset[str] = frozenset()) -> dict:
+    """Ground-truth labelling. Returns per-rule counters and per-case labels.
+
+    `canary_rules` (metadata `canary: true`) detect a marker written by the simulation itself, so a hit proves the
+    pipeline works but says nothing about detection quality: they are reported separately and never counted as TP/FP/FN.
+    """
     rules: dict[str, dict] = {}
     labels: dict[str, str] = {}
+    canary = {"rules": sorted(canary_rules), "expected": 0, "observed": 0}
 
     def bucket(rule_id: str) -> dict:
         return rules.setdefault(rule_id, {"tp": 0, "fp": 0, "fn": 0, "shadow_violation": 0, "shadow_ok": 0,
@@ -81,6 +86,13 @@ def classify(cases: list[dict], runs: list[dict]) -> dict:
 
     matched: set[tuple[str, str]] = set()
     for c in cases:
+        if str(c["rule_id"]) in canary_rules:
+            labels[c["case_id"]] = "canary"
+            run, exp = attribute(c, runs)
+            if run and exp and (run["run_id"], str(exp["rule_id"])) not in matched:
+                matched.add((run["run_id"], str(exp["rule_id"])))
+                canary["observed"] += 1
+            continue
         b = bucket(str(c["rule_id"]))
         run, exp = attribute(c, runs)
         if run and exp:
@@ -102,6 +114,9 @@ def classify(cases: list[dict], runs: list[dict]) -> dict:
             labels[c["case_id"]] = "unlabelled"
     for run in runs:
         for e in run.get("expect", []):
+            if str(e["rule_id"]) in canary_rules:
+                canary["expected"] += e.get("case", True) is True
+                continue
             if (run["run_id"], str(e["rule_id"])) in matched or e.get("optional"):
                 continue
             b = bucket(str(e["rule_id"]))
@@ -114,12 +129,13 @@ def classify(cases: list[dict], runs: list[dict]) -> dict:
         fp = b["fp"] + b["human_fp"] + b["shadow_violation"]
         b["precision"] = round(b["tp"] / (b["tp"] + fp), 3) if b["tp"] + fp else None
         b["recall"] = round(b["tp"] / (b["tp"] + b["fn"]), 3) if b["tp"] + b["fn"] else None
-    return {"rules": rules, "labels": labels}
+    canary["pipeline_ok"] = (canary["observed"] >= canary["expected"]) if canary["expected"] else None
+    return {"rules": rules, "labels": labels, "canary": canary}
 
 
 def attack_coverage(rules_meta: dict, runs: list[dict], labels: dict, cases: list[dict]) -> dict:
     live = {t for m in rules_meta.values() if m.get("state") in ("active", "enforce") for t in m.get("mitre", [])}
-    exercised = {t for r in runs if r.get("malicious") for t in r.get("techniques", [])}
+    exercised = {t for r in runs if r.get("malicious") and not r.get("canary") for t in r.get("techniques", [])}
     detected = set()
     for c in cases:
         if labels.get(c["case_id"]) == "tp":
@@ -165,7 +181,7 @@ def compute_metrics(cases: list[dict], runs: list[dict], rules_meta: dict | None
                     baseline: list[dict] | None = None, deployments: list[dict] | None = None,
                     sessions: list[dict] | None = None) -> dict:
     rules_meta = rules_meta or {}
-    cls = classify(cases, runs)
+    cls = classify(cases, runs, frozenset(str(m["rule_id"]) for m in rules_meta.values() if m.get("canary")))
     pipeline: dict[str, list[float]] = {}
     e2e: dict[str, list[float]] = {}
     for c in cases:
@@ -194,6 +210,7 @@ def compute_metrics(cases: list[dict], runs: list[dict], rules_meta: dict | None
                                                     if c.get("evidence_seconds") is not None]),
         "time_to_restore_s": summary([c["restore_seconds"] for c in cases if c.get("restore_seconds") is not None]),
         "rule_quality": cls["rules"],
+        "pipeline_canary": cls["canary"],
         "attack_coverage": attack_coverage(rules_meta, runs, cls["labels"], cases),
         "alert_duplication_reduction": {
             "alerts": total_alerts, "cases": len(cases),
@@ -232,6 +249,10 @@ def render_markdown(m: dict) -> str:
         prec = "n/a" if b["precision"] is None else b["precision"]
         rec = "n/a" if b["recall"] is None else b["recall"]
         L.append(f"| {rid} | {b['tp']} | {b['fp']} | {b['human_fp']} | {b['shadow_violation']} | {b['fn']} | {prec} | {rec} |")
+    k = m["pipeline_canary"]
+    L += ["", "## Canary pipeline (không tính vào chất lượng rule)", "",
+          f"- Rule canary: {', '.join(k['rules']) or '-'}; kỳ vọng {k['expected']}, quan sát {k['observed']} "
+          f"→ pipeline {'OK' if k['pipeline_ok'] else 'n/a' if k['pipeline_ok'] is None else 'LỖI'}"]
     c = m["attack_coverage"]
     cov = "n/a" if c["coverage_of_exercised"] is None else c["coverage_of_exercised"]
     L += ["", "## Độ phủ ATT&CK", "",

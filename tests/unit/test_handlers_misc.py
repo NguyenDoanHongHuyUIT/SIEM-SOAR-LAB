@@ -2,14 +2,14 @@ import base64
 import hashlib
 import hmac
 import json
-import os
 import time
 import urllib.parse
+from datetime import UTC, datetime, timedelta
 
 import boto3
 import pytest
 from handlers import ingest as ingest_handler
-from handlers import lab_session, notify, slack_interact
+from handlers import notify, slack_interact
 from siemsoar import notifier, slack, ssm
 
 from tests.fixtures import events as ev
@@ -110,12 +110,10 @@ def test_notify_raises_when_no_channel_at_all(store, sfn, monkeypatch):
         notify.handler({"op": "info", "kind": "isolated", "state": {"case_id": cid}})
 
 
-# ------------------------------------------------------------------ lab session
+# ------------------------------------------------------------------ lab session (tools.labctl)
 @pytest.fixture
 def lab_env(monkeypatch):
-    monkeypatch.setenv("SCHEDULER_ROLE_ARN", "arn:aws:iam::123456789012:role/sched")
-    monkeypatch.setenv("SELF_FUNCTION_ARN", "arn:aws:lambda:ap-southeast-1:123456789012:function:siemsoar-lab_session")
-    monkeypatch.setenv("LAB_NAME_PREFIX", "siemsoar")
+    monkeypatch.setenv("SCHEDULER_ROLE_ARN", "arn:aws:iam::123456789012:role/siemsoar-lab-scheduler")
     ec2 = boto3.client("ec2", region_name=R)
     ids = []
     for role in ("wazuh-manager", "suricata-sensor"):
@@ -131,33 +129,35 @@ def _state(ec2, iid):
     return ec2.describe_instances(InstanceIds=[iid])["Reservations"][0]["Instances"][0]["State"]["Name"]
 
 
-def test_lab_session_stop_start_and_timer(lab_env):
+def test_labctl_down_up_and_native_timer(lab_env):
+    from tools import labctl
     ec2, ids, other = lab_env
-    out = lab_session.handler({"action": "stop"})
-    assert sorted(out["stopped"]) == sorted(ids)
+    assert sorted(labctl.down("siemsoar")["stopped"]) == sorted(ids)
     assert all(_state(ec2, i) == "stopped" for i in ids) and _state(ec2, other) == "running"  # untagged untouched
-    out = lab_session.handler({"action": "start", "hours": 99})
+    out = labctl.up("siemsoar", hours=99)
     assert sorted(out["started"]) == sorted(ids) and out["auto_stop_at"].endswith("Z")
-    assert all(_state(ec2, i) == "running" for i in ids)
-    status = lab_session.handler({"action": "status"})
-    assert status["auto_stop"].startswith("at(")
-    lab_session.handler({"action": "stop", "reason": "auto-stop timer"})  # the timer firing keeps nothing armed
-    assert all(_state(ec2, i) == "stopped" for i in ids)
-    lab_session.handler({"action": "stop"})
-    assert lab_session.handler({"action": "status"})["auto_stop"] is None
-
-
-def test_lab_session_unknown_action(lab_env):
-    with pytest.raises(ValueError):
-        lab_session.handler({"action": "explode"})
-
-
-def test_lab_session_caps_hours(lab_env):
-    out = lab_session.handler({"action": "start", "hours": 500})
     sched = boto3.client("scheduler", region_name=R).get_schedule(Name="siemsoar-lab-autostop")
     assert sched["ScheduleExpression"].startswith("at(")
-    assert out["auto_stop_at"][:10] >= time.strftime("%Y-%m-%d", time.gmtime())
-    assert os.environ["LAB_NAME_PREFIX"] == "siemsoar"
+    # the timer is a universal target: it calls ec2:StopInstances itself, no Lambda in the path
+    assert sched["Target"]["Arn"] == "arn:aws:scheduler:::aws-sdk:ec2:stopInstances"
+    assert sorted(json.loads(sched["Target"]["Input"])["InstanceIds"]) == sorted(ids)
+    assert labctl.status("siemsoar")["auto_stop"].startswith("at(")
+    labctl.down("siemsoar")
+    assert labctl.status("siemsoar")["auto_stop"] is None
+
+
+def test_labctl_caps_hours_at_twelve(lab_env):
+    from tools import labctl
+    out = labctl.up("siemsoar", hours=500)
+    when = datetime.strptime(out["auto_stop_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    assert when - datetime.now(UTC) <= timedelta(hours=12, minutes=1)
+
+
+def test_labctl_refuses_to_arm_a_timer_without_instances(monkeypatch):
+    from tools import labctl
+    with pytest.raises(SystemExit):
+        labctl.arm_timer("siemsoar", 1, [])
+
 
 
 def test_injected_slack_fault_uses_sns_fallback(store, sfn, monkeypatch):

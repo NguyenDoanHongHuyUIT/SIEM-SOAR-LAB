@@ -3,6 +3,7 @@ engine: wazuh
 rule_id: 100130
 name: Simulated adversary technique marker
 state: active
+canary: true   # detects the marker the simulation writes itself: proves the pipeline, never counted as detection quality
 response: none
 mitre: [T1059.004]
 tactic: Execution
@@ -23,3 +24,10 @@ tests:
   - name: marker without technique
     expect: no_match
     event: {program_name: siemsoar-sim, full_log: "Oct  6 10:00:00 host siemsoar-sim: hello"}
+  # --- raw-log samples run on the real Wazuh engine (tools/wazuh_logtest.py). DRAFT: confirm on the first CI run.
+  - name: simulation marker line
+    expect: match
+    log: "Oct  7 10:00:00 ip-10-0-0-5 siemsoar-sim: technique=T1059.004 run_id=run-demo-01"
+  - name: same text from another program
+    expect: no_match
+    log: "Oct  7 10:00:00 ip-10-0-0-5 cron[77]: technique=T1059.004"

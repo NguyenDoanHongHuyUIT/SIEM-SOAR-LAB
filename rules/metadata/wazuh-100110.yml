@@ -18,3 +18,10 @@ tests:
   - name: user-added rule did not fire
     expect: no_match
     event: {decoder: adduser, parents: [5901], full_log: "groupadd[1234]: new group: name=ops, GID=1001"}
+  # --- raw-log samples run on the real Wazuh engine (tools/wazuh_logtest.py). DRAFT: confirm on the first CI run.
+  - name: useradd syslog line (full decoder -> 5902 -> 100110 chain)
+    expect: match
+    log: "Oct  7 10:00:00 ip-10-0-0-5 useradd[1234]: new user: name=backdoor, UID=1001, GID=1001, home=/home/backdoor, shell=/bin/bash, from=/dev/pts/0"
+  - name: groupadd must not fire the user rule
+    expect: no_match
+    log: "Oct  7 10:00:00 ip-10-0-0-5 groupadd[1234]: new group: name=ops, GID=1001"

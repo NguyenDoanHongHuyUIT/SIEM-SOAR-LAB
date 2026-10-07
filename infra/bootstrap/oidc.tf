@@ -53,6 +53,19 @@ resource "aws_iam_role_policy" "plan_state" {
   policy = data.aws_iam_policy_document.plan_state.json
 }
 
+# tests/contract/test_teststate.py: Step Functions TestState with mocked integrations (no resources are touched)
+data "aws_iam_policy_document" "plan_teststate" {
+  statement {
+    actions   = ["states:TestState"]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "plan_teststate" {
+  role   = aws_iam_role.gha_plan.id
+  policy = data.aws_iam_policy_document.plan_teststate.json
+}
+
 # ---- Role APPLY: chỉ job gắn Environment "lab" ----
 data "aws_iam_policy_document" "apply_trust" {
   statement {

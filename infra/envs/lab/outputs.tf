@@ -6,7 +6,6 @@ output "core" {
     cases_table           = module.core.cases_table
     notify_topic_arn      = module.core.notify_topic_arn
     state_machine_arn     = module.core.state_machine_arn
-    lab_session_function  = module.core.lab_session_function
     slack_interaction_url = module.core.slack_interaction_url
   }
 }

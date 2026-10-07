@@ -17,7 +17,7 @@ def test_scenarios_are_well_formed_and_consistent_with_rule_states():
     assert len(scenarios) >= 12
     for sid, s in scenarios.items():
         assert s["id"] == sid == s["_file"].removesuffix(".yml")
-        assert s["kind"] in {"ssm_shell", "guardduty_sample", "stratus", "pcap_replay", "robustness"}
+        assert s["kind"] in {"ssm_shell", "atomic", "guardduty_sample", "stratus", "pcap_replay", "robustness"}
         assert "title" in s and "malicious" in s
         for e in s.get("expect", []):
             if e["source"] == "guardduty":
@@ -106,7 +106,8 @@ def test_metrics_ground_truth_labelling():
     assert q["100100"]["tp"] == 1 and q["100100"]["precision"] == 1.0
     assert q["100101"]["shadow_violation"] == 1 and q["100101"]["precision"] is None or q["100101"]["precision"] == 0.0
     assert q["110001"]["tp"] == 1
-    assert q["100130"]["human_fp"] == 1 and q["100110"]["unlabelled"] == 1
+    assert "100130" not in q  # canary rule: never counted as detection quality
+    assert q["100110"]["unlabelled"] == 1
     assert m["alert_duplication_reduction"] == {"alerts": 7, "cases": 5, "reduction": round(1 - 5 / 7, 3)}
     assert m["time_to_containment_s"]["p50"] == 12.5 and m["time_to_evidence_preservation_s"]["n"] == 1
     assert m["detection_latency_by_source_s"]["alert_to_case"]["wazuh"]["n"] >= 3
@@ -190,3 +191,54 @@ def test_faults_inert_unless_enabled(monkeypatch):
     with pytest.raises(faults.InjectedFault):
         faults.maybe_fail("contain.revoke_sessions")
     faults.maybe_fail("other.point")
+
+
+# ------------------------------------------------------------------ canary rules and Atomic Red Team execution
+def test_canary_rule_is_reported_separately_and_never_counted_as_detection_quality():
+    runs = [{"run_id": "run-k-1", "scenario": "host-marker", "kind": "ssm_shell", "malicious": True, "canary": True,
+             "techniques": ["T1059.004"], "started_at": "2026-10-06T09:59:50.000Z", "ended_at": "2026-10-06T10:00:00.000Z",
+             "expect": [{"source": "wazuh", "rule_id": "100130", "case": True}]}]
+    cases = [_case(1, rule="100130", run_id="run-k-1", created="2026-10-06T10:00:20.000Z")]
+    m = ev.compute_metrics(cases, runs, rulesctl.load_metadata())
+    assert "100130" not in m["rule_quality"]
+    assert m["pipeline_canary"] == {"rules": ["100130"], "expected": 1, "observed": 1, "pipeline_ok": True}
+    assert m["attack_coverage"]["techniques_exercised"] == []  # a self-written marker is not an exercised technique
+    assert "Canary pipeline" in ev.render_markdown(m)
+    missed = ev.compute_metrics([], runs, rulesctl.load_metadata())
+    assert missed["pipeline_canary"]["pipeline_ok"] is False  # no case for the marker: the pipeline is broken
+
+
+def test_marker_rule_100130_is_declared_canary_in_metadata():
+    assert rulesctl.load_metadata()["wazuh-100130"].get("canary") is True
+
+
+def _runner_with_fake_ssm(monkeypatch, fail_verify=False):
+    calls = []
+    r = object.__new__(runner.Runner)
+    monkeypatch.setattr(r, "instance", lambda role: "i-sensor", raising=False)
+
+    def fake(instance_id, commands, timeout=120):
+        calls.append(commands[0])
+        if fail_verify and commands[0].startswith("getent"):
+            raise RuntimeError("ssm command Failed")
+        return "{}"
+
+    monkeypatch.setattr(r, "ssm_run", fake, raising=False)
+    return r, calls
+
+
+def test_atomic_scenario_runs_upstream_atomic_then_verifies_then_cleans_up(monkeypatch):
+    r, calls = _runner_with_fake_ssm(monkeypatch)
+    s = runner.load_scenarios()["host-useradd"]
+    out = r.exec_atomic(s, "run-20261007-host-useradd-beef")
+    assert "run_atomic.py T1136.001 40d8eabd-e394-46f6-8785-b9bfa1d011d2 --arg username=siemsoar_sim_beef" in calls[0]
+    assert calls[0].startswith("ART_REF=master /opt/siemsoar/art-venv/bin/python")
+    assert calls[1] == "getent passwd siemsoar_sim_beef" and calls[2].startswith("userdel -r siemsoar_sim_beef")
+    assert out["atomic"]["technique"] == "T1136.001"
+
+
+def test_atomic_failure_is_an_execution_error_not_a_silent_false_negative(monkeypatch):
+    r, calls = _runner_with_fake_ssm(monkeypatch, fail_verify=True)
+    with pytest.raises(RuntimeError):
+        r.exec_atomic(runner.load_scenarios()["host-useradd"], "run-x-beef")
+    assert calls[-1].startswith("userdel")  # cleanup still ran

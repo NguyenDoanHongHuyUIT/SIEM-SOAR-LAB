@@ -1,7 +1,7 @@
 # Đánh giá (Chương 6)
 
 Quy trình: chạy kịch bản lặp lại → mỗi lượt có `run_id` + kỳ vọng (ground truth) lưu ở `RUN#<id>` → `evaluate` ghép case với lượt chạy
-(host: theo `run_id` in trong syslog; cloud/network: theo cửa sổ thời gian + rule/finding kỳ vọng) → xuất `reports/<ts>/metrics.{json,md}`.
+(kịch bản tự viết có `run_id` trong syslog; Atomic Red Team, cloud, network: theo cửa sổ thời gian + rule/finding kỳ vọng) → xuất `reports/<ts>/metrics.{json,md}`.
 
 ```bash
 python -m simulation.runner run-all --repeat 5         # lặp để có phân bố
@@ -20,6 +20,11 @@ python -m evaluation.evaluate --baseline evaluation/baseline.csv --sessions eval
 | Rule deployment lead time | `deployed_at − commit_time` | `releases/*/deployment.json` |
 | Robustness under failure | pass-rate của `robust-*` (double click, lỗi giữa chừng, Slack tắt) + kiểm chứng từng bước | run |
 | Operating cost per session | ước tính từ giá niêm yết × giờ (`sessions.csv`); đối chiếu Cost Explorer theo tag `Project=siem-soar-lab` | sessions.csv |
+
+## Atomic Red Team và rule canary
+* `host-useradd` chạy **atomic T1136.001 #1 nguyên bản** của Red Canary (`scripts/run_atomic.py` + `atomic-operator`). `atomic-operator` thoát mã 0 kể cả khi lệnh atomic lỗi, nên kịch bản có `verify:` (lệnh phải thành công), nếu không lượt chạy bị ghi là *lỗi thực thi* thay vì FN giả.
+* ART không có atomic Linux tương ứng cho SSH brute force hay FIM `/etc/passwd` trực tiếp, nên `host-ssh-burst` và `host-fim-passwd` vẫn tự viết (ghi rõ trong file).
+* Rule `wazuh-100130` khớp **marker do chính kịch bản ghi** (`logger`), nên luôn "đúng". Nó mang `canary: true`: chỉ chứng minh pipeline sống, được báo riêng ở mục *Canary pipeline*, **không** tính TP/FP/FN hay ATT&CK coverage.
 
 ## Baseline (6.3)
 Baseline = GuardDuty gửi email mặc định + tự cách ly bằng AWS Console. **Đo, không giả định**: dùng `evaluation/baseline.example.csv`

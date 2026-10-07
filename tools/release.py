@@ -15,12 +15,12 @@ import argparse
 import json
 import os
 import sys
-import time
 from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "lambdas"))
 
+from botocore.exceptions import WaiterError  # noqa: E402
 from siemsoar import aws  # noqa: E402
 
 TARGETS = {"manager": "wazuh-manager", "sensor": "suricata-sensor"}
@@ -73,16 +73,19 @@ def deploy_target(prefix: str, target: str, sha: str, timeout: int = 900, poll: 
     cmd = ssm.send_command(InstanceIds=ids, DocumentName=f"{prefix}-deploy-rules",
                            Parameters={"Target": [target], "Release": [sha]}, TimeoutSeconds=600,
                            Comment=f"siemsoar rules {sha[:8]}")["Command"]["CommandId"]
-    end, results = time.time() + timeout, {}
-    while time.time() < end and len(results) < len(ids):
-        for iid in ids:
-            if iid in results:
-                continue
-            inv = ssm.get_command_invocation(CommandId=cmd, InstanceId=iid)
-            if inv["Status"] in {"Success", "Failed", "Cancelled", "TimedOut"}:
-                results[iid] = {"status": inv["Status"], "stderr": inv.get("StandardErrorContent", "")[-500:]}
-        time.sleep(poll)
-    ok = len(results) == len(ids) and all(r["status"] == "Success" for r in results.values())
+    # boto3's built-in `command_executed` waiter polls get_command_invocation and, unlike a hand-written loop,
+    # also tolerates InvocationDoesNotExist (returned for a few seconds right after send_command).
+    waiter = ssm.get_waiter("command_executed")
+    config = {"Delay": poll, "MaxAttempts": max(1, int(timeout / poll))}
+    results = {}
+    for iid in ids:
+        try:
+            waiter.wait(CommandId=cmd, InstanceId=iid, WaiterConfig=config)
+        except WaiterError:
+            pass  # Failed / Cancelled / TimedOut / waiter timeout: the real status is read below
+        inv = ssm.get_command_invocation(CommandId=cmd, InstanceId=iid)
+        results[iid] = {"status": inv["Status"], "stderr": inv.get("StandardErrorContent", "")[-500:]}
+    ok = all(r["status"] == "Success" for r in results.values())
     return {"target": target, "status": "deployed" if ok else "failed", "instances": results}
 
 

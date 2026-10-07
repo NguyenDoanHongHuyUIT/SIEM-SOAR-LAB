@@ -16,7 +16,11 @@ log "instance=$INSTANCE_ID iface=$IFACE manager=$MANAGER_IP"
 apt-get install -y software-properties-common
 add-apt-repository -y ppa:oisf/suricata-stable
 apt-get update -y
-apt-get install -y suricata tcpreplay jq python3-yaml
+apt-get install -y suricata tcpreplay jq python3-yaml python3-venv
+# Atomic Red Team runner (simulation scenarios of kind `atomic`). atomic-operator 0.9.x does not declare `attrs`.
+python3 -m venv /opt/siemsoar/art-venv
+/opt/siemsoar/art-venv/bin/pip install --quiet atomic-operator attrs
+mkdir -p /opt/atomic-red-team/atomics
 sed -i "s/interface: eth0/interface: ${IFACE}/" /etc/suricata/suricata.yaml
 grep -q "siemsoar.rules" /etc/suricata/suricata.yaml || sed -i '/^rule-files:/a\  - siemsoar.rules' /etc/suricata/suricata.yaml
 mkdir -p /var/lib/suricata/rules
@@ -38,7 +42,10 @@ chmod 644 /usr/share/keyrings/wazuh.gpg
 echo "deb [signed-by=/usr/share/keyrings/wazuh.gpg] https://packages.wazuh.com/4.x/apt/ stable main" \
   > /etc/apt/sources.list.d/wazuh.list
 apt-get update -y
-WAZUH_MANAGER="$MANAGER_IP" WAZUH_AGENT_NAME="$INSTANCE_ID" apt-get install -y wazuh-agent
+# The 4.x apt channel always serves the NEWEST 4.x agent, but the manager is pinned to ${WAZUH_VERSION}.
+# Wazuh requires manager version >= agent version, so pin the agent to the same minor and hold it.
+WAZUH_MANAGER="$MANAGER_IP" WAZUH_AGENT_NAME="$INSTANCE_ID" apt-get install -y "wazuh-agent=${WAZUH_VERSION}.*"
+apt-mark hold wazuh-agent
 
 if ! grep -q "BEGIN SIEMSOAR" /var/ossec/etc/ossec.conf; then
   cat "$BOOT/suricata/ossec_agent_additions.xml" >> /var/ossec/etc/ossec.conf

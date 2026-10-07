@@ -39,3 +39,19 @@ tests:
       - {parents: [5760], fields: {srcip: 10.0.1.99}, t: 120}
       - {parents: [5760], fields: {srcip: 10.0.1.99}, t: 160}
       - {parents: [5760], fields: {srcip: 10.0.1.99}, t: 200}
+  # --- raw-log samples run on the real Wazuh engine (tools/wazuh_logtest.py). DRAFT: confirm on the first CI run.
+  - name: six failed passwords from one source (real 5760 -> 100120 frequency chain)
+    expect: match
+    logs:
+      - "Oct  7 10:00:00 ip-10-0-0-5 sshd[20]: Failed password for root from 10.0.1.99 port 4000 ssh2"
+      - "Oct  7 10:00:10 ip-10-0-0-5 sshd[21]: Failed password for root from 10.0.1.99 port 4001 ssh2"
+      - "Oct  7 10:00:20 ip-10-0-0-5 sshd[22]: Failed password for root from 10.0.1.99 port 4002 ssh2"
+      - "Oct  7 10:00:30 ip-10-0-0-5 sshd[23]: Failed password for root from 10.0.1.99 port 4003 ssh2"
+      - "Oct  7 10:00:40 ip-10-0-0-5 sshd[24]: Failed password for root from 10.0.1.99 port 4004 ssh2"
+      - "Oct  7 10:00:50 ip-10-0-0-5 sshd[25]: Failed password for root from 10.0.1.99 port 4005 ssh2"
+  - name: only three failures
+    expect: no_match
+    logs:
+      - "Oct  7 10:00:00 ip-10-0-0-5 sshd[20]: Failed password for root from 10.0.1.99 port 4000 ssh2"
+      - "Oct  7 10:00:10 ip-10-0-0-5 sshd[21]: Failed password for root from 10.0.1.99 port 4001 ssh2"
+      - "Oct  7 10:00:20 ip-10-0-0-5 sshd[22]: Failed password for root from 10.0.1.99 port 4002 ssh2"

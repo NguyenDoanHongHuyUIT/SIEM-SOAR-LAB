@@ -37,6 +37,37 @@ data "aws_iam_policy_document" "sfn_perm" {
   }
 }
 
+# Direct SDK integrations (tools/gen_asl.py): the permissions that used to live on the `contain` Lambda role for the
+# single-call steps now sit on the state machine role, with the same scoping (workload-zone tag / lab-* users).
+data "aws_iam_policy_document" "sfn_sdk" {
+  statement {
+    sid       = "StopWorkloadInstance"
+    actions   = ["ec2:StopInstances"]
+    resources = ["${local.ec2_arn}:instance/*"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/siemsoar:zone"
+      values   = ["workload"]
+    }
+  }
+  statement {
+    sid       = "DisableLabAccessKey"
+    actions   = ["iam:UpdateAccessKey"]
+    resources = ["${local.iam_arn}:user/${var.iam_target_prefix}*"]
+  }
+  statement {
+    sid       = "CaseAndAuditRows"
+    actions   = ["dynamodb:PutItem", "dynamodb:UpdateItem"]
+    resources = [aws_dynamodb_table.cases.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "sfn_sdk" {
+  name   = "sdk-integrations"
+  role   = aws_iam_role.sfn.id
+  policy = data.aws_iam_policy_document.sfn_sdk.json
+}
+
 resource "aws_iam_role_policy" "sfn" {
   name   = "invoke-lambdas"
   role   = aws_iam_role.sfn.id
@@ -56,6 +87,7 @@ resource "aws_sfn_state_machine" "case" {
     fn_contain    = aws_lambda_function.fn["contain"].arn
     fn_restore    = aws_lambda_function.fn["restore"].arn
     fn_case_ops   = aws_lambda_function.fn["case_ops"].arn
+    table_name    = aws_dynamodb_table.cases.name
   })
 
   logging_configuration {

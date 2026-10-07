@@ -53,14 +53,14 @@ Chi tiết: [docs/architecture.md](docs/architecture.md).
 | `infra/modules/serverless-core` | Mặt phẳng always-on: DynamoDB, S3 (evidence Object Lock, CloudTrail, rules), GuardDuty, CloudTrail, EventBridge+DLQ, 10 Lambda (role riêng, least privilege), Step Functions, API Gateway, SSM params, alarm, Budgets, timer tự tắt |
 | `infra/modules/lab-ondemand` | Mặt phẳng on-demand: VPC không cổng vào, Wazuh all-in-one, EC2 lab (Wazuh Agent + Suricata), IMDSv2, SSM document deploy rule, IAM victim user |
 | `src/lambdas/siemsoar` | Thư viện lõi: schema chuẩn hóa, store DynamoDB (state machine case, dedup nguyên tử, token một lần, circuit breaker), Slack, evidence, response (EC2/IAM) |
-| `src/lambdas/handlers` | Lambda handler: `ingest`, `enrich`, `notify`, `slack_interact`, `preflight`, `save_state`, `contain`, `restore`, `case_ops`, `lab_session` |
+| `src/lambdas/handlers` | Lambda handler: `ingest`, `enrich`, `notify`, `slack_interact`, `preflight`, `save_state`, `contain`, `restore`, `case_ops` (stop instance / disable key / audit rows là **SDK integration** của Step Functions, không phải Lambda) |
 | `statemachine/` | Case workflow (sinh bởi `tools/gen_asl.py`, có `--check` trong CI) |
 | `rules/` | Wazuh XML, Suricata rules, **metadata YAML** (state, MITRE, FP kỳ vọng, test dương/âm) |
-| `tools/` | `rulesctl` (lint/test/lifecycle/build/promote/coverage/tune), `rule_engine`, `suricata_pcap_test`, `make_pcaps`, `release`, `soarctl`, `export_evidence`, `gen_asl` |
+| `tools/` | `rulesctl` (lint/test/lifecycle/build/promote/coverage/tune), `rule_engine` (lọc sơ bộ offline), `wazuh_logtest` (rule trên engine Wazuh thật), `suricata_pcap_test`, `make_pcaps` (Scapy), `release`, `labctl` (bật/tắt lab + timer), `soarctl`, `export_evidence`, `gen_asl` |
 | `wazuh/`, `suricata/`, `scripts/` | Bootstrap manager/agent/sensor, integration `custom-eventbridge`, `deploy_rules.sh` (kiểm tra + tự rollback trên host) |
-| `simulation/` | 14 kịch bản có ground truth (host, AWS, network, robustness) + runner; kịch bản vòng đời rule chạy qua pipeline CI/CD (xem `docs/detection-as-code.md`) |
+| `simulation/` | 14 kịch bản có ground truth (host: Atomic Red Team `atomic` + kịch bản tự viết khi ART không có atomic tương ứng; AWS; network; robustness) + runner; kịch bản vòng đời rule chạy qua pipeline CI/CD (xem `docs/detection-as-code.md`) |
 | `evaluation/` | Tính toàn bộ chỉ số của đề cương từ dữ liệu thật + baseline + chi phí |
-| `tests/` | 120+ test (moto): unit, workflow end-to-end chạy **đúng ASL thật** với handler thật |
+| `tests/` | 130+ test (moto): unit, workflow end-to-end chạy **đúng ASL thật** với handler thật; `tests/contract` kiểm ASL bằng **TestState API** của AWS (chạy khi có `RUN_TESTSTATE=1`) |
 | `.github/` | CI, Terraform plan/apply, `rules-deploy`, `lab-session`, PR template |
 
 ## Bắt đầu nhanh
@@ -84,7 +84,7 @@ Triển khai thật (chi tiết từng bước, kể cả tạo Slack App: [docs
 |---|---|---|
 | Logic case, dedup, token một lần, double-click, breaker, fail-safe, restore, IAM key rotation | 120+ test với moto, workflow chạy đúng ASL + handler thật | Hành vi AWS thật (moto không mô phỏng hết ràng buộc IAM/SG) |
 | Rule Suricata | `suricata -T` + replay pcap bằng **Suricata thật** (3 TP, benign = 0 alert) | Hiệu năng/độ nhiễu trên traffic thật |
-| Rule Wazuh | Mini-engine offline (cú pháp rule dùng trong repo) | `wazuh-analysisd -t` / `wazuh-logtest` trên Wazuh thật (script có sẵn trong `deploy_rules.sh`) |
+| Rule Wazuh | Mini-engine offline (lọc sơ bộ) + job CI `wazuh-engine` (`wazuh-analysisd -t` và `wazuh-logtest` trên image Wazuh chính thức) | Mẫu log thô trong metadata còn là bản nháp: xác nhận ở lần chạy CI đầu tiên |
 | Terraform | `fmt`, `validate`, `terraform test` (plan đầy đủ với provider mock, có/không có mặt phẳng lab) | `plan/apply` trên tài khoản thật |
 | Bootstrap Wazuh/Suricata | `bash -n` + shellcheck | Chạy thật trên Ubuntu 22.04 (cần tinh chỉnh theo phiên bản Wazuh) |
 
@@ -95,7 +95,7 @@ và theo checklist trong runbook.
 
 | Đề cương | Hiện thực |
 |---|---|
-| 4.1 Hai mặt phẳng | `serverless-core` (always-on) / `lab-ondemand` (+ `lab_session`, timer tự tắt, Budgets) |
+| 4.1 Hai mặt phẳng | `serverless-core` (always-on) / `lab-ondemand` (+ `labctl`, timer tự tắt bằng EventBridge Scheduler gọi thẳng `ec2:StopInstances`, Budgets) |
 | 4.2 Bảng thành phần | Wazuh/Agent (`wazuh/`, `suricata/`), GuardDuty/CloudTrail (`guardduty.tf`, `cloudtrail.tf`), EventBridge, Step Functions, DynamoDB, Slack+SNS, GitHub Actions |
 | 4.3 Hình 2 – vòng đời rule | `rulesctl lint/test/lifecycle/build/promote`, `rules-deploy.yml`, `release rollback` |
 | 4.3 Hình 3 – luồng phát hiện→phản ứng | `statemachine/case_workflow.asl.json` |

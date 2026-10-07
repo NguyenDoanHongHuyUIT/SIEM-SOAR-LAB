@@ -20,8 +20,9 @@ variable "sensor_instance_type" {
 }
 
 variable "wazuh_version" {
-  type    = string
-  default = "4.9"
+  type        = string
+  default     = "4.14" # manager (wazuh-install.sh) and agent apt pin; keep CI `WAZUH_VERSION` in the same minor
+  description = "Wazuh minor version. The manager must be >= the agent, so the agent is pinned to the same minor."
 }
 
 variable "rules_bucket" { type = string }

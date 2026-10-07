@@ -1,6 +1,6 @@
 name: lab-session
 # Switch the on-demand plane (Wazuh manager + dashboard + lab EC2) on for a working session, off afterwards.
-# `up` also arms a hard auto-stop timer (EventBridge Scheduler -> lab_session Lambda) so a forgotten session cannot burn credit.
+# `up` also arms a hard auto-stop timer (one-time EventBridge Scheduler schedule that calls ec2:StopInstances directly) so a forgotten session cannot burn credit.
 on:
   workflow_dispatch:
     inputs:
@@ -37,6 +37,10 @@ jobs:
         with:
           role-to-assume: ${{ vars.APPLY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install boto3
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.10.5"
@@ -46,21 +50,16 @@ jobs:
       - name: down - stop timer + instances first, then destroy the plane
         if: inputs.action == 'down'
         run: |
-          aws lambda invoke --function-name siemsoar-lab_session --payload '{"action":"stop"}' \
-            --cli-binary-format raw-in-base64-out /dev/stdout || true
+          python -m tools.labctl down || true
           terraform -chdir=$TF_DIR apply -input=false -auto-approve -var lab_enabled=false
 
       - name: up - create/refresh the plane
         if: inputs.action == 'up'
         run: terraform -chdir=$TF_DIR apply -input=false -auto-approve -var lab_enabled=true
 
-      - name: up/extend - arm the auto-stop timer
+      - name: up/extend - start the instances and arm the auto-stop timer
         if: inputs.action != 'down'
-        run: |
-          aws lambda invoke --function-name siemsoar-lab_session \
-            --payload "{\"action\":\"$( [ '${{ inputs.action }}' = extend ] && echo extend || echo start )\",\"hours\":${{ inputs.hours }}}" \
-            --cli-binary-format raw-in-base64-out out.json
-          cat out.json
+        run: python -m tools.labctl ${{ inputs.action == 'extend' && 'extend' || 'up' }} --hours "${{ inputs.hours }}"
 
       - name: Session summary
         if: inputs.action != 'down'

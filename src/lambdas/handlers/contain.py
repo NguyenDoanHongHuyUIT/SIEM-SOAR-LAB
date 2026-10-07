@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 from siemsoar import evidence, faults, response
-from siemsoar.config import settings
 from siemsoar.errors import VerificationFailed
 from siemsoar.schema import PLAN_EC2
 from siemsoar.states import Status
 from siemsoar.util import iso, parse_iso
 
-from handlers._common import config_of, dry_run_of, load
+from handlers._common import dry_run_of, load
 
 
 def _pre(cid: str) -> dict:
@@ -38,20 +37,6 @@ def _revoke_ec2_sessions(case, event, store):
     return response.revoke_role_sessions(pre["role_name"], dry_run_of(event))
 
 
-def _stop(case, event, store):
-    threshold = config_of(event).get("stop_risk_threshold", settings().stop_risk_threshold)
-    if case.get("risk_score", 0) < threshold:
-        return {"stopped": False, "reason": f"risk {case.get('risk_score')} < {threshold}"}
-    out = response.set_instance_running(case["response_plan"]["params"]["instance_id"], False, dry_run_of(event))
-    store.update_case(case["case_id"], instance_stopped=out["changed"])
-    return {"stopped": out["changed"], **out}
-
-
-def _disable_key(case, event, store):
-    p = case["response_plan"]["params"]
-    return response.set_key_status(p["user_name"], p["access_key_id"], active=False, dry_run=dry_run_of(event))
-
-
 def _revoke_user_sessions(case, event, store):
     return response.revoke_user_sessions(case["response_plan"]["params"]["user_name"], dry_run_of(event))
 
@@ -77,9 +62,10 @@ def _verify(case, event, store):
     return {"verified": True, "summary": summary, "containment_seconds": seconds}
 
 
+# `stop_instance` (ec2:StopInstances) and `disable_key` (iam:UpdateAccessKey) are single API calls: they run as
+# Step Functions AWS SDK integrations (see tools/gen_asl.py), not here.
 OPS = {"snapshot": _snapshot, "isolate_network": _isolate, "revoke_sessions": _revoke_ec2_sessions,
-       "stop_instance": _stop, "disable_key": _disable_key, "revoke_user_sessions": _revoke_user_sessions,
-       "verify": _verify}
+       "revoke_user_sessions": _revoke_user_sessions, "verify": _verify}
 
 
 def handler(event, context=None):

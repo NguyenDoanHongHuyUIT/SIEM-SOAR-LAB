@@ -36,9 +36,10 @@ nên trạng thái rule chỉ đổi được bằng một dòng `state:` trong 
 | Lớp | Công cụ | Bắt được gì | Giới hạn |
 |---|---|---|---|
 | Cú pháp/metadata | `rulesctl lint` | thiếu metadata, id sai dải, MITRE sai/không khớp XML, group lifecycle viết tay | – |
-| Mẫu log dương/âm | `rulesctl test` (mini-engine `tools/rule_engine.py`) | anchor sai, field sai, match quá rộng, frequency/timeframe/same_source_ip | Không phải Wazuh thật; `frequency` tính ≥ N |
+| Mẫu sự kiện dương/âm (nhanh, offline) | `rulesctl test` (mini-engine `tools/rule_engine.py`; chỉ là bộ lọc sơ bộ, **không** thay engine thật) | anchor sai, field sai, match quá rộng, frequency/timeframe/same_source_ip | Không phải Wazuh thật; `frequency` tính ≥ N |
 | Suricata thật | `tools.suricata_pcap_test` | cú pháp (`-T`), TP trên pcap, **benign không alert** | pcap tổng hợp, không phải traffic thật |
-| Wazuh thật | `wazuh-analysisd -t` trong `deploy_rules.sh` (+ `wazuh-logtest` thủ công) | lỗi cú pháp/phụ thuộc trên engine thật | chạy khi deploy, tự rollback nếu lỗi |
+| Wazuh thật (CI) | job `wazuh-engine`: image `wazuh/wazuh-manager` + `wazuh-analysisd -t` + `tools.wazuh_logtest` (API `PUT /logtest`) | decoder → rule cha → rule tùy chỉnh → `frequency/timeframe` **đúng engine production**; mẫu log thô `log:`/`logs:` trong metadata | cần mẫu log thô cho từng rule (`--strict` bắt rule active chưa có mẫu) |
+| Wazuh thật (host) | `wazuh-analysisd -t` trong `deploy_rules.sh` | lỗi cú pháp trên host đích | chạy khi deploy, tự rollback nếu lỗi |
 | Lifecycle gate | `rulesctl lifecycle --base` | rule mới không phải shadow, nhảy trạng thái bất hợp lệ | `Revert*` PR được miễn để rollback bằng git revert |
 
 ## Triển khai và rollback

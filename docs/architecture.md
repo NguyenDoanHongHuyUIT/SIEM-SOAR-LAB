@@ -5,7 +5,7 @@
 | | Always-on (serverless) | On-demand (bật theo phiên) |
 |---|---|---|
 | Thành phần | CloudTrail→S3, GuardDuty, EventBridge(+DLQ), Lambda, Step Functions, DynamoDB, S3 evidence, SNS, API Gateway | VPC lab, Wazuh Manager+Indexer+Dashboard, EC2 lab (Wazuh Agent + Suricata) |
-| Chi phí | Trả theo dùng (~vài USD/tháng khi nhàn rỗi; GuardDuty tính theo khối lượng) | Chỉ tính khi bật; `lab_session` tự tắt bằng EventBridge Scheduler |
+| Chi phí | Trả theo dùng (~vài USD/tháng khi nhàn rỗi; GuardDuty tính theo khối lượng) | Chỉ tính khi bật; `tools.labctl` bật lab và đặt timer tự tắt: EventBridge Scheduler gọi thẳng `ec2:StopInstances` (không Lambda) |
 | Khi tắt | Cloud path (GuardDuty) vẫn tạo case | Telemetry host/Suricata có khoảng trống; CloudTrail trong S3 được Wazuh đọc bù khi bật lại |
 | Terraform | `infra/modules/serverless-core` | `infra/modules/lab-ondemand` (`count = lab_enabled ? 1 : 0`) |
 
@@ -101,8 +101,8 @@ GSI: `dedup-index`, `resource-index (resource_id, created_at)`, `status-index (s
 
 | Nguyên tắc | Hiện thực |
 |---|---|
-| Managed first | Dịch vụ AWS quản lý; glue code ≈ 2k dòng Python chỉ dùng boto3 + stdlib |
+| Managed first | Dịch vụ AWS quản lý; thao tác một lệnh API (`ec2:StopInstances`, `iam:UpdateAccessKey`, ghi audit DynamoDB) chạy bằng **SDK integration** của Step Functions với Retry/Catch gốc; chỉ phần có logic (preflight, cô lập SG, restore, xác minh) mới là Lambda (boto3 + stdlib) |
 | Everything as code | Terraform, rule + metadata, workflow (sinh bằng `gen_asl`), pipeline |
 | Human approval | 2 cổng (containment, restore); hết hạn → `EXPIRED`, không làm gì |
 | Fail safe | Lỗi giữa chừng → giữ trạng thái an toàn đã đạt (không tự rollback), `FAILED` + SNS/Slack + alarm CloudWatch |
-| Cost awareness | `lab_session` + timer, Budgets, PAY_PER_REQUEST, log 14 ngày, không NAT |
+| Cost awareness | `labctl` + timer Scheduler, Budgets, PAY_PER_REQUEST, log 14 ngày, không NAT |

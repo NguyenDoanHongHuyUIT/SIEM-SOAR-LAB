@@ -58,7 +58,7 @@ locals {
       conditions = [local.zone_condition]
     }
     ec2_contain_instance = {
-      actions    = ["ec2:StopInstances", "ec2:CreateTags"]
+      actions    = ["ec2:CreateTags"] # StopInstances moved to the state machine role (SDK integration)
       resources  = ["${local.ec2_arn}:instance/*"]
       conditions = [local.zone_condition]
     }
@@ -108,7 +108,7 @@ locals {
       resources = ["${local.iam_arn}:user/${var.iam_target_prefix}*"]
     }
     iam_user_contain = {
-      actions   = ["iam:UpdateAccessKey", "iam:PutUserPolicy"]
+      actions   = ["iam:PutUserPolicy"] # UpdateAccessKey moved to the state machine role (SDK integration)
       resources = ["${local.iam_arn}:user/${var.iam_target_prefix}*"]
     }
     iam_user_restore = {
@@ -127,29 +127,6 @@ locals {
     }
     sfn_start = { actions = ["states:StartExecution"], resources = [local.sfn_arn] }
     sfn_task  = { actions = ["states:SendTaskSuccess"], resources = ["*"] }
-    lab_ec2 = {
-      actions   = ["ec2:StartInstances", "ec2:StopInstances"]
-      resources = ["${local.ec2_arn}:instance/*"]
-      conditions = [{
-        test     = "StringEquals"
-        variable = "aws:ResourceTag/siemsoar:plane"
-        values   = ["ondemand"]
-      }]
-    }
-    lab_ec2_read = { actions = ["ec2:DescribeInstances"], resources = ["*"] }
-    lab_scheduler = {
-      actions   = ["scheduler:CreateSchedule", "scheduler:DeleteSchedule", "scheduler:GetSchedule"]
-      resources = ["arn:aws:scheduler:${local.region}:${local.account_id}:schedule/default/${var.name_prefix}-lab-*"]
-    }
-    lab_passrole = {
-      actions   = ["iam:PassRole"]
-      resources = [aws_iam_role.scheduler.arn]
-      conditions = [{
-        test     = "StringEquals"
-        variable = "iam:PassedToService"
-        values   = ["scheduler.amazonaws.com"]
-      }]
-    }
   }
 
   functions = {
@@ -201,10 +178,6 @@ locals {
       timeout    = 30, memory = 256
       statements = [local.st.ddb, local.st.sns, local.st.ssm, local.st.kms_ssm]
     }
-    lab_session = {
-      timeout    = 60, memory = 128
-      statements = [local.st.lab_ec2, local.st.lab_ec2_read, local.st.lab_scheduler, local.st.lab_passrole]
-    }
   }
 
   common_env = {
@@ -225,12 +198,6 @@ locals {
     LOG_LEVEL                = "INFO"
     LAB_FAULTS_ENABLED       = tostring(var.enable_fault_injection)
     FAULT_INJECT             = ""
-  }
-
-  lab_env = {
-    LAB_NAME_PREFIX    = var.name_prefix
-    SCHEDULER_ROLE_ARN = aws_iam_role.scheduler.arn
-    SELF_FUNCTION_ARN  = "arn:aws:lambda:${local.region}:${local.account_id}:function:${var.name_prefix}-lab_session"
   }
 }
 
@@ -303,7 +270,7 @@ resource "aws_lambda_function" "fn" {
   memory_size      = each.value.memory
 
   environment {
-    variables = each.key == "lab_session" ? local.lab_env : local.common_env
+    variables = local.common_env
   }
 
   depends_on = [aws_cloudwatch_log_group.fn, aws_iam_role_policy.fn]

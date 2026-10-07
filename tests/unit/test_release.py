@@ -2,6 +2,7 @@ import json
 
 import boto3
 import pytest
+from botocore.exceptions import WaiterError
 
 from tools import release, rulesctl
 
@@ -19,6 +20,17 @@ class FakeSsm:
     def get_command_invocation(self, CommandId, InstanceId):  # noqa: N803
         return {"Status": self.status, "StandardErrorContent": "analysisd -t failed" if self.status != "Success" else ""}
 
+    def get_waiter(self, name):
+        assert name == "command_executed"
+        outer = self
+
+        class _Waiter:
+            def wait(self, CommandId, InstanceId, WaiterConfig=None):  # noqa: N803
+                if outer.status != "Success":
+                    raise WaiterError(name, "Waiter encountered a terminal failure state", {})
+
+        return _Waiter()
+
 
 @pytest.fixture
 def env(monkeypatch, tmp_path):
@@ -31,7 +43,6 @@ def env(monkeypatch, tmp_path):
     ssm = FakeSsm()
     real = aws.client
     monkeypatch.setattr(aws, "client", lambda svc: ssm if svc == "ssm" else real(svc))
-    monkeypatch.setattr(release.time, "sleep", lambda s: None)
     return bucket, ssm, tmp_path / "dist"
 
 

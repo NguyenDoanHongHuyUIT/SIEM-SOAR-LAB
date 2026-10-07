@@ -66,15 +66,14 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     _env(args.prefix)
 
-    from siemsoar import aws
     from siemsoar.decisions import DecisionRejected, apply_decision
     from siemsoar.store import CaseNotFound, CaseStore
 
     if args.cmd == "lab":
-        action = {"up": "start", "down": "stop"}.get(args.action, args.action)
-        res = aws.client("lambda").invoke(FunctionName=f"{args.prefix}-lab_session",
-                                          Payload=json.dumps({"action": action, "hours": args.hours}))
-        print(res["Payload"].read().decode())
+        from tools import labctl
+        timed = {"up": labctl.up, "extend": labctl.extend}.get(args.action)
+        out = timed(args.prefix, args.hours) if timed else getattr(labctl, args.action)(args.prefix)
+        print(json.dumps(out, indent=2))
         return 0
 
     store = CaseStore()

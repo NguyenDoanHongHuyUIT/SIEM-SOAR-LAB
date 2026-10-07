@@ -7,6 +7,5 @@ output "cases_table" { value = aws_dynamodb_table.cases.name }
 output "notify_topic_arn" { value = aws_sns_topic.notify.arn }
 output "state_machine_arn" { value = aws_sfn_state_machine.case.arn }
 output "slack_interaction_url" { value = "${aws_apigatewayv2_api.slack.api_endpoint}/slack/interact" }
-output "lab_session_function" { value = aws_lambda_function.fn["lab_session"].function_name }
 output "default_event_bus_arn" { value = "arn:aws:events:${local.region}:${local.account_id}:event-bus/default" }
 output "name_prefix" { value = var.name_prefix }

@@ -357,7 +357,7 @@
         {
           "Variable": "$.steps.enrich.out.plan_type",
           "StringEquals": "iam_key_disable",
-          "Next": "DisableKey"
+          "Next": "ShouldDisableKey"
         }
       ]
     },
@@ -473,32 +473,140 @@
           "Next": "FailSafe"
         }
       ],
-      "Next": "StopInstance"
+      "Next": "ShouldStopInstance"
+    },
+    "ShouldStopInstance": {
+      "Type": "Choice",
+      "Default": "AuditStopSkipped",
+      "Choices": [
+        {
+          "And": [
+            {
+              "Variable": "$.config.dry_run",
+              "BooleanEquals": false
+            },
+            {
+              "Variable": "$.steps.enrich.out.stop_instance",
+              "BooleanEquals": true
+            }
+          ],
+          "Next": "StopInstance"
+        }
+      ]
     },
     "StopInstance": {
       "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
+      "Resource": "arn:aws:states:::aws-sdk:ec2:stopInstances",
       "Parameters": {
-        "FunctionName": "${fn_contain}",
-        "Payload": {
-          "op": "stop_instance",
-          "state.$": "$"
-        }
-      },
-      "ResultSelector": {
-        "out.$": "$.Payload"
+        "InstanceIds.$": "States.Array($.steps.enrich.out.plan_params.instance_id)"
       },
       "ResultPath": "$.steps.stop",
       "Retry": [
         {
           "ErrorEquals": [
-            "Lambda.ServiceException",
-            "Lambda.AWSLambdaException",
-            "Lambda.SdkClientException",
-            "Lambda.TooManyRequestsException"
+            "States.TaskFailed"
           ],
           "IntervalSeconds": 2,
-          "MaxAttempts": 4,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "FailSafe"
+        }
+      ],
+      "Next": "MarkInstanceStopped"
+    },
+    "MarkInstanceStopped": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:updateItem",
+      "ResultPath": null,
+      "Parameters": {
+        "TableName": "${table_name}",
+        "Key": {
+          "pk": {
+            "S.$": "States.Format('CASE#{}', $.case_id)"
+          },
+          "sk": {
+            "S": "META"
+          }
+        },
+        "UpdateExpression": "SET instance_stopped = :t, updated_at = :u",
+        "ConditionExpression": "attribute_exists(pk)",
+        "ExpressionAttributeValues": {
+          ":t": {
+            "BOOL": true
+          },
+          ":u": {
+            "S.$": "$$.State.EnteredTime"
+          }
+        }
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.TaskFailed"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "FailSafe"
+        }
+      ],
+      "Next": "AuditStopped"
+    },
+    "AuditStopped": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:putItem",
+      "ResultPath": null,
+      "Parameters": {
+        "TableName": "${table_name}",
+        "ConditionExpression": "attribute_not_exists(sk)",
+        "Item": {
+          "pk": {
+            "S.$": "States.Format('CASE#{}', $.case_id)"
+          },
+          "sk": {
+            "S.$": "States.Format('AUDIT#{}#{}', $$.State.EnteredTime, States.UUID())"
+          },
+          "ts": {
+            "S.$": "$$.State.EnteredTime"
+          },
+          "action": {
+            "S": "contain:stop_instance"
+          },
+          "actor": {
+            "S": "system"
+          },
+          "detail": {
+            "M": {
+              "stopped": {
+                "BOOL": true
+              }
+            }
+          }
+        }
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.TaskFailed"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
           "BackoffRate": 2.0
         }
       ],
@@ -513,30 +621,198 @@
       ],
       "Next": "VerifyContainment"
     },
-    "DisableKey": {
+    "AuditStopSkipped": {
       "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
+      "Resource": "arn:aws:states:::dynamodb:putItem",
+      "ResultPath": null,
       "Parameters": {
-        "FunctionName": "${fn_contain}",
-        "Payload": {
-          "op": "disable_key",
-          "state.$": "$"
+        "TableName": "${table_name}",
+        "ConditionExpression": "attribute_not_exists(sk)",
+        "Item": {
+          "pk": {
+            "S.$": "States.Format('CASE#{}', $.case_id)"
+          },
+          "sk": {
+            "S.$": "States.Format('AUDIT#{}#{}', $$.State.EnteredTime, States.UUID())"
+          },
+          "ts": {
+            "S.$": "$$.State.EnteredTime"
+          },
+          "action": {
+            "S": "contain:stop_instance"
+          },
+          "actor": {
+            "S": "system"
+          },
+          "detail": {
+            "M": {
+              "stopped": {
+                "BOOL": false
+              },
+              "dry_run": {
+                "BOOL.$": "$.config.dry_run"
+              }
+            }
+          }
         }
       },
-      "ResultSelector": {
-        "out.$": "$.Payload"
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.TaskFailed"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "FailSafe"
+        }
+      ],
+      "Next": "VerifyContainment"
+    },
+    "ShouldDisableKey": {
+      "Type": "Choice",
+      "Default": "AuditKeyDisableSkipped",
+      "Choices": [
+        {
+          "Variable": "$.config.dry_run",
+          "BooleanEquals": false,
+          "Next": "DisableKey"
+        }
+      ]
+    },
+    "DisableKey": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:iam:updateAccessKey",
+      "Parameters": {
+        "UserName.$": "$.steps.enrich.out.plan_params.user_name",
+        "AccessKeyId.$": "$.steps.enrich.out.plan_params.access_key_id",
+        "Status": "Inactive"
       },
       "ResultPath": "$.steps.disable_key",
       "Retry": [
         {
           "ErrorEquals": [
-            "Lambda.ServiceException",
-            "Lambda.AWSLambdaException",
-            "Lambda.SdkClientException",
-            "Lambda.TooManyRequestsException"
+            "States.TaskFailed"
           ],
           "IntervalSeconds": 2,
-          "MaxAttempts": 4,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "FailSafe"
+        }
+      ],
+      "Next": "AuditKeyDisabled"
+    },
+    "AuditKeyDisabled": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:putItem",
+      "ResultPath": null,
+      "Parameters": {
+        "TableName": "${table_name}",
+        "ConditionExpression": "attribute_not_exists(sk)",
+        "Item": {
+          "pk": {
+            "S.$": "States.Format('CASE#{}', $.case_id)"
+          },
+          "sk": {
+            "S.$": "States.Format('AUDIT#{}#{}', $$.State.EnteredTime, States.UUID())"
+          },
+          "ts": {
+            "S.$": "$$.State.EnteredTime"
+          },
+          "action": {
+            "S": "contain:disable_key"
+          },
+          "actor": {
+            "S": "system"
+          },
+          "detail": {
+            "M": {
+              "status": {
+                "S": "Inactive"
+              }
+            }
+          }
+        }
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.TaskFailed"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.error",
+          "Next": "FailSafe"
+        }
+      ],
+      "Next": "RevokeUserSessions"
+    },
+    "AuditKeyDisableSkipped": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:putItem",
+      "ResultPath": null,
+      "Parameters": {
+        "TableName": "${table_name}",
+        "ConditionExpression": "attribute_not_exists(sk)",
+        "Item": {
+          "pk": {
+            "S.$": "States.Format('CASE#{}', $.case_id)"
+          },
+          "sk": {
+            "S.$": "States.Format('AUDIT#{}#{}', $$.State.EnteredTime, States.UUID())"
+          },
+          "ts": {
+            "S.$": "$$.State.EnteredTime"
+          },
+          "action": {
+            "S": "contain:disable_key"
+          },
+          "actor": {
+            "S": "system"
+          },
+          "detail": {
+            "M": {
+              "status": {
+                "S": "unchanged"
+              },
+              "dry_run": {
+                "BOOL": true
+              }
+            }
+          }
+        }
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.TaskFailed"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
           "BackoffRate": 2.0
         }
       ],

@@ -53,5 +53,5 @@ def handler(event, context=None):
     store.update_case(case["case_id"], **updates)
     store.audit(case["case_id"], "enriched", "system", {"risk_score": risk, "plan": plan["type"], "note": note})
     threshold = config_of(event).get("stop_risk_threshold", settings().stop_risk_threshold)
-    return {"risk_score": risk, "plan_type": plan["type"], "resource_exists": exists,
+    return {"risk_score": risk, "plan_type": plan["type"], "plan_params": plan["params"], "resource_exists": exists,
             "stop_instance": plan["type"] == PLAN_EC2 and risk >= threshold}

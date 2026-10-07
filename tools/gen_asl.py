@@ -4,7 +4,8 @@ Usage:
   python -m tools.gen_asl            # rewrite the JSON file
   python -m tools.gen_asl --check    # exit 1 if the committed file is stale (used by CI and tests)
 
-`${fn_*}` placeholders are substituted by Terraform templatefile() with the Lambda ARNs.
+`${fn_*}` / `${table_name}` placeholders are substituted by Terraform templatefile().
+Single-API-call steps (stop instance, disable key, audit rows) are Step Functions SDK integrations, not Lambdas.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ OUT = Path(__file__).resolve().parent.parent / "statemachine" / "case_workflow.a
 LAMBDA_RETRY = [{"ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException",
                                  "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
                  "IntervalSeconds": 2, "MaxAttempts": 4, "BackoffRate": 2.0}]
+SDK_RETRY = [{"ErrorEquals": ["States.TaskFailed"], "IntervalSeconds": 2, "MaxAttempts": 3, "BackoffRate": 2.0}]
 FAIL_CATCH = {"ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "FailSafe"}
 
 
@@ -39,6 +41,36 @@ def wait_for_decision(gate: str, timeout_path: str, result_path: str, next_: str
         "Catch": [{"ErrorEquals": ["States.Timeout"], "ResultPath": "$.error", "Next": on_timeout}, FAIL_CATCH],
         "Next": next_,
     }
+
+
+def sdk(service: str, action: str, params: dict, step: str, next_: str) -> dict:
+    """Direct AWS SDK integration: no Lambda, native Retry/Catch, IAM sits on the state machine role."""
+    return {"Type": "Task", "Resource": f"arn:aws:states:::aws-sdk:{service}:{action}", "Parameters": params,
+            "ResultPath": f"$.steps.{step}", "Retry": SDK_RETRY, "Catch": [FAIL_CATCH], "Next": next_}
+
+
+def case_key() -> dict:
+    return {"pk": {"S.$": "States.Format('CASE#{}', $.case_id)"}, "sk": {"S": "META"}}
+
+
+def ddb_mark(sets: str, values: dict, next_: str) -> dict:
+    """dynamodb:updateItem on the case record (conditional on the case existing)."""
+    return {"Type": "Task", "Resource": "arn:aws:states:::dynamodb:updateItem", "ResultPath": None,
+            "Parameters": {"TableName": "${table_name}", "Key": case_key(), "UpdateExpression": f"SET {sets}, updated_at = :u",
+                           "ConditionExpression": "attribute_exists(pk)",
+                           "ExpressionAttributeValues": {**values, ":u": {"S.$": "$$.State.EnteredTime"}}},
+            "Retry": SDK_RETRY, "Catch": [FAIL_CATCH], "Next": next_}
+
+
+def audit(action: str, detail: dict, next_: str) -> dict:
+    """Append-only audit row (same layout as CaseStore.audit) written by dynamodb:putItem."""
+    return {"Type": "Task", "Resource": "arn:aws:states:::dynamodb:putItem", "ResultPath": None,
+            "Parameters": {"TableName": "${table_name}", "ConditionExpression": "attribute_not_exists(sk)", "Item": {
+                "pk": {"S.$": "States.Format('CASE#{}', $.case_id)"},
+                "sk": {"S.$": "States.Format('AUDIT#{}#{}', $$.State.EnteredTime, States.UUID())"},
+                "ts": {"S.$": "$$.State.EnteredTime"}, "action": {"S": action}, "actor": {"S": "system"},
+                "detail": {"M": detail}}},
+            "Retry": SDK_RETRY, "Catch": [FAIL_CATCH], "Next": next_}
 
 
 def info(kind: str, step: str, next_: str, *, catch=None) -> dict:
@@ -68,12 +100,33 @@ def build() -> dict:
     s["SaveState"] = task("save_state", "save_state", "save_state", "PlanChoice")
     s["PlanChoice"] = {"Type": "Choice", "Default": "FailSafe", "Choices": [
         {"Variable": "$.steps.enrich.out.plan_type", "StringEquals": "ec2_isolate", "Next": "SnapshotEvidence"},
-        {"Variable": "$.steps.enrich.out.plan_type", "StringEquals": "iam_key_disable", "Next": "DisableKey"}]}
+        {"Variable": "$.steps.enrich.out.plan_type", "StringEquals": "iam_key_disable", "Next": "ShouldDisableKey"}]}
     s["SnapshotEvidence"] = task("contain", "snapshot", "snapshot", "IsolateNetwork")
     s["IsolateNetwork"] = task("contain", "isolate_network", "isolate", "RevokeSessions")
-    s["RevokeSessions"] = task("contain", "revoke_sessions", "revoke", "StopInstance")
-    s["StopInstance"] = task("contain", "stop_instance", "stop", "VerifyContainment")
-    s["DisableKey"] = task("contain", "disable_key", "disable_key", "RevokeUserSessions")
+    s["RevokeSessions"] = task("contain", "revoke_sessions", "revoke", "ShouldStopInstance")
+
+    # stop the instance only for high-risk cases and never in dry-run: a single ec2:StopInstances call (SDK integration)
+    s["ShouldStopInstance"] = {"Type": "Choice", "Default": "AuditStopSkipped", "Choices": [{"And": [
+        {"Variable": "$.config.dry_run", "BooleanEquals": False},
+        {"Variable": "$.steps.enrich.out.stop_instance", "BooleanEquals": True}], "Next": "StopInstance"}]}
+    s["StopInstance"] = sdk("ec2", "stopInstances",
+                            {"InstanceIds.$": "States.Array($.steps.enrich.out.plan_params.instance_id)"},
+                            "stop", "MarkInstanceStopped")
+    s["MarkInstanceStopped"] = ddb_mark("instance_stopped = :t", {":t": {"BOOL": True}}, "AuditStopped")
+    s["AuditStopped"] = audit("contain:stop_instance", {"stopped": {"BOOL": True}}, "VerifyContainment")
+    s["AuditStopSkipped"] = audit("contain:stop_instance", {"stopped": {"BOOL": False},
+                                                            "dry_run": {"BOOL.$": "$.config.dry_run"}}, "VerifyContainment")
+
+    # IAM key containment: iam:UpdateAccessKey (SDK integration), skipped in dry-run
+    s["ShouldDisableKey"] = {"Type": "Choice", "Default": "AuditKeyDisableSkipped", "Choices": [
+        {"Variable": "$.config.dry_run", "BooleanEquals": False, "Next": "DisableKey"}]}
+    s["DisableKey"] = sdk("iam", "updateAccessKey", {
+        "UserName.$": "$.steps.enrich.out.plan_params.user_name",
+        "AccessKeyId.$": "$.steps.enrich.out.plan_params.access_key_id", "Status": "Inactive"},
+        "disable_key", "AuditKeyDisabled")
+    s["AuditKeyDisabled"] = audit("contain:disable_key", {"status": {"S": "Inactive"}}, "RevokeUserSessions")
+    s["AuditKeyDisableSkipped"] = audit("contain:disable_key", {"status": {"S": "unchanged"}, "dry_run": {"BOOL": True}},
+                                        "RevokeUserSessions")
     s["RevokeUserSessions"] = task("contain", "revoke_user_sessions", "revoke", "VerifyContainment")
     s["VerifyContainment"] = task("contain", "verify", "verify", "NotifyIsolated")
     s["NotifyIsolated"] = info("isolated", "notify_isolated", "WaitRestoreDecision",

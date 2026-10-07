@@ -58,9 +58,9 @@ def test_terminal_states_and_failure_is_visible_to_cloudwatch():
 
 
 def test_function_placeholders_match_terraform_template_inputs():
-    used = set(re.findall(r"\$\{(fn_\w+)\}", json.dumps(ASL)))
+    used = set(re.findall(r"\$\{(\w+)\}", json.dumps(ASL)))  # fn_* ARNs and table_name
     tf = (Path(__file__).resolve().parents[2] / "infra/modules/serverless-core/stepfunctions.tf").read_text()
-    provided = set(re.findall(r"^\s+(fn_\w+)\s+=", tf, re.M))
+    provided = set(re.findall(r"^\s+((?:fn_\w+)|table_name)\s+=", tf, re.M))
     assert used == provided
 
 
@@ -79,3 +79,44 @@ def test_containment_happens_only_after_approval_and_preflight():
     assert order[:3] == ["Preflight", "SaveState", "PlanChoice"]
     reach_approve = [c["Next"] for c in STATES["ApprovalChoice"]["Choices"] if c["StringEquals"] == "approve"]
     assert reach_approve == ["Preflight"]
+
+
+def test_single_call_containment_steps_are_sdk_integrations_not_lambdas():
+    """Managed first (proposal 4.4): one API call = one SDK integration. Guards against moving them back to Lambda."""
+    assert STATES["StopInstance"]["Resource"] == "arn:aws:states:::aws-sdk:ec2:stopInstances"
+    assert STATES["DisableKey"]["Resource"] == "arn:aws:states:::aws-sdk:iam:updateAccessKey"
+    for name in ("StopInstance", "DisableKey"):
+        assert STATES[name]["Retry"] and any(c["Next"] == "FailSafe" for c in STATES[name]["Catch"])
+
+
+def test_dry_run_never_reaches_a_mutating_sdk_call():
+    stop_gate, key_gate = STATES["ShouldStopInstance"], STATES["ShouldDisableKey"]
+    assert {"Variable": "$.config.dry_run", "BooleanEquals": False} in stop_gate["Choices"][0]["And"]
+    assert key_gate["Choices"][0]["Variable"] == "$.config.dry_run" and key_gate["Choices"][0]["BooleanEquals"] is False
+    assert stop_gate["Default"] == "AuditStopSkipped" and key_gate["Default"] == "AuditKeyDisableSkipped"
+
+
+def test_sdk_permissions_are_on_the_state_machine_role_and_scoped():
+    root = Path(__file__).resolve().parents[2] / "infra/modules/serverless-core"
+    sf, lam = (root / "stepfunctions.tf").read_text(), (root / "lambdas.tf").read_text()
+    assert "ec2:StopInstances" in sf and "aws:ResourceTag/siemsoar:zone" in sf
+    assert "iam:UpdateAccessKey" in sf and "${var.iam_target_prefix}*" in sf
+    assert "ec2:StopInstances" not in lam.split("ec2_contain_instance")[1].split("}")[0].replace("# StopInstances", "")
+
+
+def test_sdk_integration_parameters_match_the_aws_api_models():
+    """Every non-Lambda Task must name an existing API with only valid parameters and all required ones."""
+    import botocore.session
+    sess = botocore.session.get_session()
+    checked = 0
+    for name, st in STATES.items():
+        if st["Type"] != "Task" or "lambda" in st["Resource"]:
+            continue
+        tail = st["Resource"].split(":::")[1].split(":")
+        service, action = (tail[1], tail[2]) if tail[0] == "aws-sdk" else (tail[0], tail[1])
+        shape = sess.get_service_model(service).operation_model(action[0].upper() + action[1:]).input_shape
+        given = {k.removesuffix(".$") for k in st["Parameters"]}
+        assert given <= set(shape.members), f"{name}: unknown parameters {given - set(shape.members)}"
+        assert set(shape.required_members) <= given, f"{name}: missing {set(shape.required_members) - given}"
+        checked += 1
+    assert checked == 7

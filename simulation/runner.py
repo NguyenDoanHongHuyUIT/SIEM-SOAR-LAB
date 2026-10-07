@@ -112,6 +112,28 @@ class Runner:
                 self.ssm_run(iid, [render(c, run_id) for c in s["cleanup"]])
         return {"instance": iid, "output": out[-500:]}
 
+    def exec_atomic(self, s: dict, run_id: str) -> dict:
+        """Atomic Red Team test (unmodified upstream YAML) run on the sensor host with atomic-operator.
+
+        The runner script is scripts/run_atomic.py; `verify` commands must succeed afterwards because atomic-operator
+        exits 0 even when the atomic's own command failed (that would otherwise show up as a false negative);
+        `cleanup` commands undo the atomic (the upstream cleanup is not reliable in atomic-operator 0.9.0).
+        """
+        iid = self.instance("suricata-sensor")
+        art = s["atomic"]
+        args = " ".join(f"--arg {k}={render(str(v), run_id)}" for k, v in (art.get("args") or {}).items())
+        env = f"ART_REF={art.get('ref', 'master')}"
+        cmd = (f"{env} /opt/siemsoar/art-venv/bin/python /opt/siemsoar/bootstrap/scripts/run_atomic.py "
+               f"{art['technique']} {art['test_guid']} {args}")
+        try:
+            out = self.ssm_run(iid, [cmd], timeout=int(art.get("timeout", 120)))
+            for check in s.get("verify", []):
+                self.ssm_run(iid, [render(check, run_id)])
+        finally:
+            if s.get("cleanup"):
+                self.ssm_run(iid, [render(c, run_id) for c in s["cleanup"]])
+        return {"instance": iid, "output": out[-500:], "atomic": {k: art[k] for k in ("technique", "test_guid")}}
+
     def exec_guardduty_sample(self, s: dict, run_id: str) -> dict:
         gd = self.aws.client("guardduty")
         det = gd.list_detectors()["DetectorIds"][0]
@@ -245,7 +267,7 @@ class Runner:
         started = datetime.now(UTC)
         self.log(f"{run_id}: {s['title']}")
         run = {"run_id": run_id, "scenario": scenario_id, "kind": s["kind"], "malicious": bool(s.get("malicious")),
-               "techniques": s.get("techniques", []), "expect": s.get("expect", []),
+               "canary": bool(s.get("canary")), "techniques": s.get("techniques", []), "expect": s.get("expect", []),
                "started_at": started.strftime("%Y-%m-%dT%H:%M:%S.%fZ")[:-4] + "Z"}
         if self.dry_run:
             plan = {k: v for k, v in s.items() if k != "_file"}

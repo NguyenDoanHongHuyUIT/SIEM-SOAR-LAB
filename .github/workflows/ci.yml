@@ -40,7 +40,7 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: requirements-dev.txt
-      - run: pip install pyyaml
+      - run: pip install pyyaml scapy
       - name: Lint (metadata, ids, MITRE, lifecycle groups, coverage of every rule)
         run: python -m tools.rulesctl lint
       - name: Positive/negative tests for every rule
@@ -64,6 +64,70 @@ jobs:
         run: python -m tools.suricata_pcap_test --rules "dist/${GITHUB_SHA}/suricata/siemsoar.rules"
       - name: Coverage report
         run: python -m tools.rulesctl coverage | tee "$GITHUB_STEP_SUMMARY"
+
+  wazuh-engine:
+    name: rules on the real Wazuh engine (analysisd -t + logtest API)
+    runs-on: ubuntu-latest
+    env:
+      # must match infra/modules/lab-ondemand `wazuh_version` (enforced by tests/unit/test_wazuh_logtest.py)
+      WAZUH_VERSION: "4.14.8"
+      WAZUH_API_USER: ci
+      WAZUH_API_PASSWORD: "Ci-Passw0rd.*-9x"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install pyyaml requests
+      - name: Build release (generated rules with lifecycle groups injected)
+        run: python -m tools.rulesctl build --out dist --sha "${GITHUB_SHA}"
+      - name: Start the official Wazuh manager image
+        run: |
+          docker run -d --name wazuh -p 55000:55000 \
+            -e API_USERNAME="$WAZUH_API_USER" -e API_PASSWORD="$WAZUH_API_PASSWORD" \
+            "wazuh/wazuh-manager:${WAZUH_VERSION}"
+      - name: Install the generated rules into the manager
+        run: |
+          docker cp "dist/${GITHUB_SHA}/wazuh/siemsoar_rules.xml" wazuh:/var/ossec/etc/rules/siemsoar_rules.xml
+          docker exec wazuh chown root:wazuh /var/ossec/etc/rules/siemsoar_rules.xml
+          docker exec wazuh chmod 660 /var/ossec/etc/rules/siemsoar_rules.xml
+      - name: wazuh-analysisd -t (the same syntax check the host runs at deploy time, now at PR time)
+        run: docker exec wazuh /var/ossec/bin/wazuh-analysisd -t
+      - name: logtest - raw-log samples through decoders and rules (engine-accurate)
+        run: python -m tools.wazuh_logtest --url https://localhost:55000 --user "$WAZUH_API_USER" --wait 240
+      - if: failure()
+        run: docker logs wazuh | tail -100
+
+  asl-contract:
+    name: state machine on the real Step Functions interpreter (TestState, mocked integrations)
+    # needs OIDC: skipped for forks (no id-token) and when the plan role variable is not configured
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      AWS_REGION: ap-southeast-1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - name: Offline request validation (always)
+        run: pytest tests/contract -q
+      - uses: aws-actions/configure-aws-credentials@v4
+        if: vars.PLAN_ROLE_ARN != ''
+        with:
+          role-to-assume: ${{ vars.PLAN_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: TestState against the service
+        if: vars.PLAN_ROLE_ARN != ''
+        run: RUN_TESTSTATE=1 pytest tests/contract -q
 
   shell:
     runs-on: ubuntu-latest
@@ -89,7 +153,7 @@ jobs:
             terraform -chdir="$dir" init -backend=false -input=false
             terraform -chdir="$dir" validate
           done
-      - name: terraform test (mocked AWS provider: the full configuration must plan, with and without the lab plane)
+      - name: "terraform test (mocked AWS provider - the full configuration must plan, with and without the lab plane)"
         run: |
           terraform -chdir=infra/envs/lab init -backend=false -input=false
           terraform -chdir=infra/envs/lab test

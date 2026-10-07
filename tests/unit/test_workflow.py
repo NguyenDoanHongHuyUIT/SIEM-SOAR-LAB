@@ -384,3 +384,52 @@ def test_iam_rotation_works_when_user_already_has_two_keys(store, sfn, iam_user)
     cid = start(store, ev.guardduty_key(key=iam_user))
     outcome, _, _ = asl_runner.run(cid, CFG, gates("approve", "restore_tp"))
     assert outcome == "Succeed" and iam_user not in response.list_keys("lab-alice")
+
+
+# ------------------------------------------------------------------ SDK-integration steps (no Lambda): audit + dry-run
+def _audit_detail(store, cid, action):
+    return next(a["detail"] for a in store.list_audit(cid) if a["action"] == action)
+
+
+def test_stop_instance_sdk_step_writes_audit_and_case_flag(store, sfn):
+    lab = Lab()
+    cid = start(store, ev.guardduty_instance(lab.iid, sev=8.9))
+    asl_runner.run(cid, {**CFG, "stop_risk_threshold": 70}, gates("approve", "restore_tp"))
+    assert _audit_detail(store, cid, "contain:stop_instance") == {"stopped": True}
+    assert store.get_case(cid)["instance_stopped"] is True  # written by dynamodb:updateItem, read by restore
+
+
+def test_low_risk_skips_stop_and_audits_the_decision(store, sfn):
+    lab = Lab()
+    cid = start(store, ev.guardduty_instance(lab.iid, sev=4.0))
+    asl_runner.run(cid, CFG, gates("approve", "restore_tp"))
+    assert _audit_detail(store, cid, "contain:stop_instance")["stopped"] is False
+    assert not store.get_case(cid).get("instance_stopped")
+    assert response.describe_instance(lab.iid)["state"] in {"pending", "running"}
+
+
+def test_dry_run_skips_sdk_calls_but_still_audits(store, sfn, iam_user):
+    lab = Lab()
+    cid = start(store, ev.guardduty_instance(lab.iid, sev=8.9))
+    asl_runner.run(cid, {**CFG, "dry_run": True, "stop_risk_threshold": 70}, gates("approve", "restore_fp"))
+    assert response.describe_instance(lab.iid)["state"] in {"pending", "running"}
+    assert _audit_detail(store, cid, "contain:stop_instance") == {"stopped": False, "dry_run": True}
+    kid = start(store, ev.guardduty_key(key=iam_user, fid="gd-dry"))
+    asl_runner.run(kid, {**CFG, "dry_run": True}, gates("approve", "restore_fp"))
+    assert response.list_keys("lab-alice") == {iam_user: "Active"}
+    assert _audit_detail(store, kid, "contain:disable_key")["dry_run"] is True
+
+
+def test_disable_key_sdk_step_audits_and_key_goes_inactive_before_restore(store, sfn, iam_user):
+    cid = start(store, ev.guardduty_key(key=iam_user))
+    seen = {}
+
+    def cb(gate, data, token):
+        if gate == "restore":
+            seen["keys"] = response.list_keys("lab-alice")
+        q(gate, data, token)
+
+    q = gates("approve", "restore_fp")
+    asl_runner.run(cid, CFG, cb)
+    assert seen["keys"] == {iam_user: "Inactive"}
+    assert _audit_detail(store, cid, "contain:disable_key") == {"status": "Inactive"}
