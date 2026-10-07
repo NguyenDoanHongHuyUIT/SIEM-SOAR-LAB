@@ -1,0 +1,28 @@
+id: wazuh-100100
+engine: wazuh
+rule_id: 100100
+name: Critical account file modified
+state: active
+response: ec2_isolate
+mitre: [T1136.001]
+tactic: Persistence
+owner: nguyen-doan-hong-huy
+created: 2026-10-06
+data_source: Wazuh syscheck (FIM) on the lab EC2
+description: >
+  /etc/passwd changed. In a lab host this should only happen through the package manager or an admin
+  adding a user; the response is host containment after human approval.
+expected_fp: Legitimate maintenance (useradd by an administrator, package post-install scripts).
+tests:
+  - name: passwd content changed
+    expect: match
+    event: {decoder: syscheck, parents: [550], fields: {file: /etc/passwd}}
+  - name: other file changed
+    expect: no_match
+    event: {decoder: syscheck, parents: [550], fields: {file: /etc/hosts}}
+  - name: passwd prefix lookalike
+    expect: no_match
+    event: {decoder: syscheck, parents: [550], fields: {file: /etc/passwd-}}
+  - name: not an integrity event
+    expect: no_match
+    event: {decoder: sshd, parents: [5760], fields: {file: /etc/passwd}}

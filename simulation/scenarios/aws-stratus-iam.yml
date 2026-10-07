@@ -1,0 +1,10 @@
+id: aws-stratus-iam
+title: AWS technique - Stratus Red Team credential persistence (needs the stratus binary)
+kind: stratus
+malicious: true
+techniques: [T1098]
+stratus_technique: aws.persistence.iam-create-user-login-profile
+expect:
+  - {source: guardduty, rule_id: 'Persistence:IAMUser/UserPermissions', case: true, optional: true}
+settle_seconds: 900
+notes: GuardDuty may not alert on every Stratus technique inside a short window; the expectation is optional.

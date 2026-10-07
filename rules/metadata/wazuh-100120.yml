@@ -1,0 +1,57 @@
+id: wazuh-100120
+engine: wazuh
+rule_id: 100120
+name: SSH authentication failure burst
+state: shadow
+response: none
+mitre: [T1110.001]
+tactic: Credential Access
+owner: nguyen-doan-hong-huy
+created: 2026-10-06
+data_source: sshd auth failures (built-in rule 5760) via Wazuh agent
+description: Six or more SSH failures from one source in two minutes. Kept in shadow until its FP rate is measured.
+expected_fp: Misconfigured automation retrying with an old password; vulnerability scanners run by the owner.
+tests:
+  - name: six failures from one source
+    expect: match
+    events:
+      - {parents: [5760], fields: {srcip: 10.0.1.99}, t: 0}
+      - {parents: [5760], fields: {srcip: 10.0.1.99}, t: 10}
+      - {parents: [5760], fields: {srcip: 10.0.1.99}, t: 20}
+      - {parents: [5760], fields: {srcip: 10.0.1.99}, t: 30}
+      - {parents: [5760], fields: {srcip: 10.0.1.99}, t: 40}
+      - {parents: [5760], fields: {srcip: 10.0.1.99}, t: 50}
+  - name: failures from different sources
+    expect: no_match
+    events:
+      - {parents: [5760], fields: {srcip: 10.0.1.1}, t: 0}
+      - {parents: [5760], fields: {srcip: 10.0.1.2}, t: 10}
+      - {parents: [5760], fields: {srcip: 10.0.1.3}, t: 20}
+      - {parents: [5760], fields: {srcip: 10.0.1.4}, t: 30}
+      - {parents: [5760], fields: {srcip: 10.0.1.5}, t: 40}
+      - {parents: [5760], fields: {srcip: 10.0.1.6}, t: 50}
+  - name: too slow (outside timeframe)
+    expect: no_match
+    events:
+      - {parents: [5760], fields: {srcip: 10.0.1.99}, t: 0}
+      - {parents: [5760], fields: {srcip: 10.0.1.99}, t: 40}
+      - {parents: [5760], fields: {srcip: 10.0.1.99}, t: 80}
+      - {parents: [5760], fields: {srcip: 10.0.1.99}, t: 120}
+      - {parents: [5760], fields: {srcip: 10.0.1.99}, t: 160}
+      - {parents: [5760], fields: {srcip: 10.0.1.99}, t: 200}
+  # --- raw-log samples run on the real Wazuh engine (tools/wazuh_logtest.py). DRAFT: confirm on the first CI run.
+  - name: six failed passwords from one source (real 5760 -> 100120 frequency chain)
+    expect: match
+    logs:
+      - "Oct  7 10:00:00 ip-10-0-0-5 sshd[20]: Failed password for root from 10.0.1.99 port 4000 ssh2"
+      - "Oct  7 10:00:10 ip-10-0-0-5 sshd[21]: Failed password for root from 10.0.1.99 port 4001 ssh2"
+      - "Oct  7 10:00:20 ip-10-0-0-5 sshd[22]: Failed password for root from 10.0.1.99 port 4002 ssh2"
+      - "Oct  7 10:00:30 ip-10-0-0-5 sshd[23]: Failed password for root from 10.0.1.99 port 4003 ssh2"
+      - "Oct  7 10:00:40 ip-10-0-0-5 sshd[24]: Failed password for root from 10.0.1.99 port 4004 ssh2"
+      - "Oct  7 10:00:50 ip-10-0-0-5 sshd[25]: Failed password for root from 10.0.1.99 port 4005 ssh2"
+  - name: only three failures
+    expect: no_match
+    logs:
+      - "Oct  7 10:00:00 ip-10-0-0-5 sshd[20]: Failed password for root from 10.0.1.99 port 4000 ssh2"
+      - "Oct  7 10:00:10 ip-10-0-0-5 sshd[21]: Failed password for root from 10.0.1.99 port 4001 ssh2"
+      - "Oct  7 10:00:20 ip-10-0-0-5 sshd[22]: Failed password for root from 10.0.1.99 port 4002 ssh2"

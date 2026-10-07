@@ -1,0 +1,7 @@
+id: robust-double-click
+title: Robustness - concurrent approval clicks produce exactly one valid result
+kind: robustness
+check: double_click
+malicious: true
+techniques: []
+settle_seconds: 30

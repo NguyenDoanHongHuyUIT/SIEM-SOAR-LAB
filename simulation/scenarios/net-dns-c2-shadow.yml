@@ -1,0 +1,10 @@
+id: net-dns-c2-shadow
+title: Network - DNS lookup of the lab C2 domain (shadow rule, so logged but no case)
+kind: pcap_replay
+target: sensor
+malicious: true
+techniques: [T1071.004]
+pcap: dns_c2.pcap
+expect:
+  - {source: suricata, rule_id: "110003", case: false}
+settle_seconds: 120

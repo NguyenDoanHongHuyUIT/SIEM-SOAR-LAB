@@ -1,0 +1,10 @@
+id: net-sqlmap-shadow
+title: Network - sqlmap user agent (shadow rule -> no case)
+kind: pcap_replay
+target: sensor
+malicious: true
+techniques: [T1190]
+pcap: sqlmap.pcap
+expect:
+  - {source: suricata, rule_id: "110002", case: false}
+settle_seconds: 120

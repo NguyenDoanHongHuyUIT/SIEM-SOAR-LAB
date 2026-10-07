@@ -1,0 +1,7 @@
+boto3>=1.35
+moto[dynamodb,s3,sns,stepfunctions,ec2,iam,ssm,secretsmanager]>=5.0
+pytest>=8.0
+pyyaml>=6.0
+ruff>=0.6
+scapy>=2.5
+requests>=2.31

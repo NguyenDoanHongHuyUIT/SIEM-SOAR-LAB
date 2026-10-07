@@ -1,0 +1,8 @@
+id: robust-slack-down
+title: Robustness - Slack unavailable, SNS email fallback + CLI decision still work
+kind: robustness
+check: slack_down
+fault: notify.slack
+malicious: true
+techniques: []
+settle_seconds: 60

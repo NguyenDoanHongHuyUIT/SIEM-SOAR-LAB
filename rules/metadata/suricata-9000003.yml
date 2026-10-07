@@ -1,0 +1,22 @@
+id: suricata-9000003
+engine: suricata
+rule_id: 9000003
+level: 9
+name: Lab C2 domain lookup
+state: shadow
+response: none
+mitre: [T1071.004]
+tactic: Command and Control
+owner: nguyen-doan-hong-huy
+created: 2026-10-06
+data_source: Suricata EVE JSON (DNS) via Wazuh agent
+description: DNS query for the reserved lab C2 domain used by the simulation.
+expected_fp: None expected; .test is a reserved TLD (RFC 6761).
+tests:
+  - name: c2 lookup
+    expect: match
+    payload: {buffer: dns.query, value: "beacon.lab-c2.test"}
+  - name: normal lookup
+    expect: no_match
+    payload: {buffer: dns.query, value: "example.com"}
+pcap: {file: dns_c2.pcap, expect_sids: [9000003]}

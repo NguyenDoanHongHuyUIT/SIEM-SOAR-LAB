@@ -1,0 +1,20 @@
+id: host-useradd
+title: Persistence - create a local account (Atomic Red Team T1136.001 test 1, upstream YAML)
+kind: atomic
+target: sensor
+malicious: true
+techniques: [T1136.001]
+atomic:
+  technique: T1136.001
+  test_guid: 40d8eabd-e394-46f6-8785-b9bfa1d011d2   # "Create a user account on a Linux system" (useradd, root)
+  args: {username: "siemsoar_sim_{short}"}
+  ref: master             # set a commit SHA of redcanaryco/atomic-red-team for reproducible evaluation runs
+verify:                   # atomic-operator exits 0 even if the atomic failed: fail the run instead of recording a fake FN
+  - 'getent passwd siemsoar_sim_{short}'
+cleanup:
+  - 'userdel -r siemsoar_sim_{short} || true'
+expect:
+  - {source: wazuh, rule_id: "100110", case: true}
+  - {source: wazuh, rule_id: "100100", case: true, optional: true}   # /etc/passwd FIM also fires
+settle_seconds: 120
+notes: No run_id in the log line (the atomic is unmodified), so the case is attributed by time window + expected rule.

@@ -1,0 +1,13 @@
+id: host-marker
+title: Deterministic host marker (pipeline smoke test, no disruptive action)
+kind: ssm_shell
+target: sensor            # lab host (Wazuh agent + Suricata)
+malicious: true
+canary: true             # pipeline smoke test: the rule matches the marker written here, so it is excluded from TP/FP/coverage
+techniques: [T1059.004]
+commands:
+  - 'logger -t siemsoar-sim "technique=T1059.004 run_id={run_id}"'
+cleanup: []
+expect:
+  - {source: wazuh, rule_id: "100130", case: true}
+settle_seconds: 90

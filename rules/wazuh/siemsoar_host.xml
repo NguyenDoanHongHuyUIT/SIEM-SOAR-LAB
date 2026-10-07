@@ -1,0 +1,58 @@
+<!--
+  SIEMSOAR detection-as-code: host rules (ids 100100-100199).
+  Authoring rules:
+    * every <rule id> needs rules/metadata/wazuh-<id>.yml (state, MITRE, expected FP, positive/negative tests)
+    * do NOT add <group> siemsoar_<state> / resp_<x> tags here: `tools/rulesctl.py build` injects them from
+      the metadata, which is how shadow/active/enforce/deprecated is controlled from Git.
+-->
+<group name="siemsoar,syscheck,">
+  <rule id="100100" level="12">
+    <if_sid>550</if_sid>
+    <field name="file">^/etc/passwd$</field>
+    <description>SIEMSOAR: /etc/passwd was modified</description>
+    <mitre>
+      <id>T1136.001</id>
+    </mitre>
+  </rule>
+
+  <rule id="100101" level="7">
+    <if_sid>550,554</if_sid>
+    <field name="file">^/srv/lab/</field>
+    <description>SIEMSOAR: file changed in the lab canary directory</description>
+    <mitre>
+      <id>T1565.001</id>
+    </mitre>
+  </rule>
+</group>
+
+<group name="siemsoar,adduser,">
+  <rule id="100110" level="10">
+    <if_sid>5902</if_sid>
+    <description>SIEMSOAR: new local user account created</description>
+    <mitre>
+      <id>T1136.001</id>
+    </mitre>
+  </rule>
+</group>
+
+<group name="siemsoar,authentication_failures,sshd,">
+  <rule id="100120" level="10" frequency="6" timeframe="120">
+    <if_matched_sid>5760</if_matched_sid>
+    <same_source_ip />
+    <description>SIEMSOAR: SSH authentication failure burst from one source</description>
+    <mitre>
+      <id>T1110.001</id>
+    </mitre>
+  </rule>
+</group>
+
+<group name="siemsoar,simulation,">
+  <rule id="100130" level="8">
+    <program_name>^siemsoar-sim$</program_name>
+    <match>technique=</match>
+    <description>SIEMSOAR: simulated adversary technique marker</description>
+    <mitre>
+      <id>T1059.004</id>
+    </mitre>
+  </rule>
+</group>

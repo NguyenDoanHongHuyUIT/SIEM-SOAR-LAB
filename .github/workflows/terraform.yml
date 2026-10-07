@@ -1,18 +1,34 @@
 name: terraform
 on:
   pull_request:
-    paths: ["infra/**", "statemachine/**"]
+    paths: ["infra/**", "statemachine/**", "src/lambdas/**", "wazuh/**", "suricata/**", "scripts/**"]
   push:
     branches: [main]
-    paths: ["infra/**", "statemachine/**"]
+    paths: ["infra/**", "statemachine/**", "src/lambdas/**", "wazuh/**", "suricata/**", "scripts/**"]
+  workflow_dispatch:
+    inputs:
+      lab_enabled:
+        description: "On-demand plane (Wazuh + lab EC2). keep = whatever the current state has"
+        type: choice
+        options: [keep, "true", "false"]
+        default: keep
 
 permissions:
   id-token: write
   contents: read
+  pull-requests: write
+
+concurrency:
+  group: terraform-lab # never run two plans/applies against the same state
+  cancel-in-progress: false
 
 env:
   TF_DIR: infra/envs/lab
+  AWS_REGION: ap-southeast-1
   TF_VAR_alert_email: ${{ vars.ALERT_EMAIL }}
+  TF_VAR_slack_channel: ${{ vars.SLACK_CHANNEL }}
+  TF_VAR_dry_run: ${{ vars.DRY_RUN || 'true' }}
+  TF_VAR_enable_fault_injection: ${{ vars.ENABLE_FAULT_INJECTION || 'false' }}
 
 jobs:
   plan:
@@ -23,23 +39,52 @@ jobs:
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.PLAN_ROLE_ARN }}
-          aws-region: ap-southeast-1
+          aws-region: ${{ env.AWS_REGION }}
       - uses: hashicorp/setup-terraform@v3
-      - run: terraform -chdir=$TF_DIR init -input=false
-      - run: terraform -chdir=$TF_DIR fmt -check -recursive ../..
+        with:
+          terraform_version: "1.10.5"
+          terraform_wrapper: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m tools.gen_asl --check
+      - run: terraform fmt -check -recursive infra
+      - run: terraform -chdir=$TF_DIR init -input=false -backend-config="bucket=${{ vars.TFSTATE_BUCKET }}"
       - run: terraform -chdir=$TF_DIR validate
-      - run: terraform -chdir=$TF_DIR plan -input=false
+      - name: Plan (lab plane keeps its current on/off state)
+        id: plan
+        run: |
+          LAB=$(terraform -chdir=$TF_DIR output -json lab 2>/dev/null | jq -r 'if . == null then "false" else "true" end' || echo false)
+          terraform -chdir=$TF_DIR plan -input=false -no-color -var "lab_enabled=$LAB" | tee plan.txt
+      - name: Summarise plan
+        if: always()
+        run: |
+          {
+            echo '### terraform plan'
+            echo '```'
+            tail -n 60 plan.txt || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   apply:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    environment: lab
+    environment: lab # protection rule = manual approval before anything is applied
     steps:
       - uses: actions/checkout@v4
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.APPLY_ROLE_ARN }}
-          aws-region: ap-southeast-1
+          aws-region: ${{ env.AWS_REGION }}
       - uses: hashicorp/setup-terraform@v3
-      - run: terraform -chdir=$TF_DIR init -input=false
-      - run: terraform -chdir=$TF_DIR apply -input=false -auto-approve
+        with:
+          terraform_version: "1.10.5"
+          terraform_wrapper: false
+      - run: terraform -chdir=$TF_DIR init -input=false -backend-config="bucket=${{ vars.TFSTATE_BUCKET }}"
+      - name: Apply
+        run: |
+          INPUT="${{ github.event.inputs.lab_enabled || 'keep' }}"
+          if [ "$INPUT" = "keep" ]; then
+            INPUT=$(terraform -chdir=$TF_DIR output -json lab 2>/dev/null | jq -r 'if . == null then "false" else "true" end' || echo false)
+          fi
+          terraform -chdir=$TF_DIR apply -input=false -auto-approve -var "lab_enabled=$INPUT"

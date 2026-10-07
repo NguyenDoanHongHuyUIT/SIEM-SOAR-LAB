@@ -1,0 +1,8 @@
+id: robust-mid-failure
+title: Robustness - failure after isolation keeps the safe state and alerts the operator
+kind: robustness
+check: mid_failure
+fault: contain.revoke_sessions
+malicious: true
+techniques: []
+settle_seconds: 120

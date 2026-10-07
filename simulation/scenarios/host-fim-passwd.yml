@@ -1,0 +1,14 @@
+id: host-fim-passwd
+title: File integrity - modify /etc/passwd (restored by cleanup)
+kind: ssm_shell          # hand-written: direct /etc/passwd append, restored by cleanup (T1136.001 atomic #1 is used by host-useradd)
+target: sensor
+malicious: true
+techniques: [T1136.001]
+commands:
+  - 'cp -p /etc/passwd /var/tmp/passwd.siemsoar.bak'
+  - 'echo "siemsoar_sim_{short}:x:1999:1999::/nonexistent:/usr/sbin/nologin # run_id={run_id}" >> /etc/passwd'
+cleanup:
+  - 'cp -p /var/tmp/passwd.siemsoar.bak /etc/passwd && rm -f /var/tmp/passwd.siemsoar.bak'
+expect:
+  - {source: wazuh, rule_id: "100100", case: true}
+settle_seconds: 120

@@ -1,0 +1,9 @@
+id: net-benign
+title: Network - benign traffic must produce nothing
+kind: pcap_replay
+target: sensor
+malicious: false
+techniques: []
+pcap: benign.pcap
+expect: []
+settle_seconds: 60

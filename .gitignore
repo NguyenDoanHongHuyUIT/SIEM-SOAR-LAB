@@ -1,9 +1,25 @@
+# terraform
 *.tfstate
 *.tfstate.*
 .terraform/
 .terraform.lock.hcl.bak
 *.tfvars
 !*.tfvars.example
+backend.hcl
+.build/
+# secrets
 *.pem
 .env
+# python
 __pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.venv/
+# generated
+reports/
+dist/
+.terraform.lock.hcl
+# stray build artifacts (never commit wheels/tarballs: pin them in requirements-dev.txt instead)
+*.whl
+*.tar.gz

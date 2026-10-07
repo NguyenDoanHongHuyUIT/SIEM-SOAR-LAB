@@ -1,0 +1,67 @@
+name: rules-deploy
+# Detection-as-code pipeline: merge to main -> build release -> upload -> deploy (SSM) -> record lead time.
+# New rules always land in `shadow` (enforced by the lifecycle gate in ci.yml); promotion is a one-line PR.
+on:
+  push:
+    branches: [main]
+    paths: ["rules/**", "tools/rulesctl.py", "tools/rule_engine.py", "tools/release.py", "scripts/deploy_rules.sh"]
+  workflow_dispatch:
+    inputs:
+      rollback_sha:
+        description: "Redeploy an earlier release instead (fast rollback; normal rollback = git revert + this workflow)"
+        required: false
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: rules-deploy
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-southeast-1
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: lab-rules
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install pyyaml boto3
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.RULES_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Rollback to an earlier release
+        if: inputs.rollback_sha != ''
+        run: python -m tools.release rollback --sha "${{ inputs.rollback_sha }}"
+
+      - name: Gate (same checks as PR CI, never deploy an unchecked tree)
+        if: inputs.rollback_sha == ''
+        run: |
+          python -m tools.rulesctl lint
+          python -m tools.rulesctl test
+      - name: Build release
+        if: inputs.rollback_sha == ''
+        run: python -m tools.rulesctl build --out dist --sha "${GITHUB_SHA}"
+      - name: Publish + deploy (host validates with analysisd -t / suricata -T and rolls back on failure)
+        if: inputs.rollback_sha == ''
+        run: |
+          COMMIT_TIME=$(git show -s --format=%cI "${GITHUB_SHA}")
+          python -m tools.release publish --dist dist --sha "${GITHUB_SHA}" --commit-time "$COMMIT_TIME" \
+            | tee "$RUNNER_TEMP/deployment.json"
+          {
+            echo '### Rule release'
+            echo '```json'
+            cat "$RUNNER_TEMP/deployment.json"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
