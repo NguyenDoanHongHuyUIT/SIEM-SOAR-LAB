@@ -153,6 +153,13 @@ def test_labctl_caps_hours_at_twelve(lab_env):
     assert when - datetime.now(UTC) <= timedelta(hours=12, minutes=1)
 
 
+@pytest.mark.parametrize("hours", [0, -1, float("nan"), float("inf")])
+def test_labctl_rejects_invalid_timer_hours(hours):
+    from tools import labctl
+    with pytest.raises(ValueError, match="finite number greater than zero"):
+        labctl.arm_timer("siemsoar", hours, ["i-1234567890abcdef0"])
+
+
 def test_labctl_refuses_to_arm_a_timer_without_instances(monkeypatch):
     from tools import labctl
     with pytest.raises(SystemExit):

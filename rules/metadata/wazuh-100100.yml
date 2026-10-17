@@ -5,6 +5,10 @@ name: Critical account file modified
 state: active
 response: ec2_isolate
 mitre: [T1136.001]
+wraps: [550]   # official Wazuh rules this rule hangs under (checked by lint)
+references:
+  - https://attack.mitre.org/techniques/T1136/001/
+  - https://documentation.wazuh.com/current/user-manual/capabilities/file-integrity/index.html
 tactic: Persistence
 owner: nguyen-doan-hong-huy
 created: 2026-10-06
@@ -14,15 +18,16 @@ description: >
   adding a user; the response is host containment after human approval.
 expected_fp: Legitimate maintenance (useradd by an administrator, package post-install scripts).
 tests:
+  # FIM events go through the analysisd queue (syscheck never reaches logtest): tools/wazuh_logtest.py --container
   - name: passwd content changed
     expect: match
-    event: {decoder: syscheck, parents: [550], fields: {file: /etc/passwd}}
+    fim: {path: /etc/passwd}
   - name: other file changed
     expect: no_match
-    event: {decoder: syscheck, parents: [550], fields: {file: /etc/hosts}}
+    fim: {path: /etc/hosts}
   - name: passwd prefix lookalike
     expect: no_match
-    event: {decoder: syscheck, parents: [550], fields: {file: /etc/passwd-}}
-  - name: not an integrity event
+    fim: {path: /etc/passwd-}
+  - name: not an integrity event (sshd line that only mentions the file)
     expect: no_match
-    event: {decoder: sshd, parents: [5760], fields: {file: /etc/passwd}}
+    log: "Oct  7 10:00:00 ip-10-0-0-5 sshd[20]: error: could not open /etc/passwd for reading"

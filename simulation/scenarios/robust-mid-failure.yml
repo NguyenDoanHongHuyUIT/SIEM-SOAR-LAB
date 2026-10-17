@@ -1,6 +1,7 @@
 id: robust-mid-failure
 title: Robustness - failure after isolation keeps the safe state and alerts the operator
 kind: robustness
+trigger: host-useradd        # a real Atomic Red Team detection starts the case: nothing is injected
 check: mid_failure
 fault: contain.revoke_sessions
 malicious: true

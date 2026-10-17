@@ -1,6 +1,6 @@
 variable "region" {
   type    = string
-  default = "ap-southeast-1"
+  default = "us-east-1" # cheapest on-demand EC2 prices (t3.large+t3.small: 0.104 USD/h vs 0.132 in ap-southeast-1)
 }
 
 variable "github_repo" {

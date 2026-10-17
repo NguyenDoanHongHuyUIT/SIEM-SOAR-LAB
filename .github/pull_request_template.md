@@ -4,7 +4,7 @@
 ## Detection rule checklist (delete if no rule changes)
 - [ ] New rules start in `state: shadow` (the lifecycle gate fails otherwise)
 - [ ] `expected_fp` explains what legitimate activity could trigger it
-- [ ] Positive **and** negative tests added; `python -m tools.rulesctl test` is green
+- [ ] Positive **and** negative tests added; `rulesctl lint` and the real-engine jobs (`suricata_pcap_test`, `wazuh_logtest`) are green
 - [ ] MITRE ATT&CK ids match between metadata and the rule XML
 - [ ] Suricata rules: `python -m tools.suricata_pcap_test` is green (pcap expectation added)
 - [ ] Promotion (shadow → active) is in its **own** PR with the FP evidence from the shadow period

@@ -14,10 +14,6 @@ resource "aws_dynamodb_table" "cases" {
     type = "S"
   }
   attribute {
-    name = "dedup_key"
-    type = "S"
-  }
-  attribute {
     name = "resource_id"
     type = "S"
   }
@@ -28,12 +24,6 @@ resource "aws_dynamodb_table" "cases" {
   attribute {
     name = "created_at"
     type = "S"
-  }
-
-  global_secondary_index {
-    name            = "dedup-index"
-    hash_key        = "dedup_key"
-    projection_type = "ALL"
   }
 
   global_secondary_index {

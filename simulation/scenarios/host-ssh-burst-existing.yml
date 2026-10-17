@@ -1,0 +1,21 @@
+id: host-ssh-burst-existing
+title: "Credential access - wrong passwords for an existing account (official rule 5763, SIEMSOAR 100120 is shadow)"
+kind: ssm_shell
+target: sensor
+malicious: true
+techniques: [T1110]
+notes: >
+  Ubuntu cloud images disable SSH password authentication, so the host's own sshd never logs "Failed password". A
+  second, throw-away sshd on 127.0.0.1:2222 with password authentication enabled is started for the duration of the run
+  (real sshd, real PAM, real syslog lines). It uses the first regular user (uid 1000) and a wrong password, so no account
+  or password is created or changed. Needs the `sshpass` package (installed by suricata/bootstrap_sensor.sh).
+  NOT yet exercised on a live EC2 host.
+commands:
+  - 'U=$(getent passwd 1000 | cut -d: -f1); test -n "$U"'
+  - '/usr/sbin/sshd -p 2222 -o ListenAddress=127.0.0.1 -o PasswordAuthentication=yes -o UsePAM=yes -o PidFile=/run/siemsoar-sshd2.pid'
+  - 'U=$(getent passwd 1000 | cut -d: -f1); for i in $(seq 1 12); do sshpass -p wrong-{short} ssh -p 2222 -o PreferredAuthentications=password -o PubkeyAuthentication=no -o StrictHostKeyChecking=no -o ConnectTimeout=3 "$U@127.0.0.1" true >/dev/null 2>&1 || true; done'
+cleanup:
+  - 'kill $(cat /run/siemsoar-sshd2.pid) 2>/dev/null || true'
+expect:
+  - {source: wazuh, rule_id: "100120", case: false}
+settle_seconds: 120

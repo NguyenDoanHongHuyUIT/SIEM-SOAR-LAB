@@ -85,10 +85,9 @@ def build() -> dict:
     s["ApprovalChoice"] = {"Type": "Choice", "Default": "FailSafe", "Choices": [
         {"Variable": "$.approval.decision", "StringEquals": "approve", "Next": "Preflight"},
         {"Variable": "$.approval.decision", "StringEquals": "acknowledge", "Next": "MarkAcknowledged"},
-        {"Variable": "$.approval.decision", "StringEquals": "dismiss", "Next": "RecordFeedbackDismiss"}]}
+        {"Variable": "$.approval.decision", "StringEquals": "dismiss", "Next": "DoneDismissed"}]}
     s["MarkAcknowledged"] = task("case_ops", "acknowledged", "ack", "DoneAcknowledged")
     s["DoneAcknowledged"] = {"Type": "Succeed"}
-    s["RecordFeedbackDismiss"] = task("case_ops", "feedback", "feedback", "DoneDismissed")
     s["DoneDismissed"] = {"Type": "Succeed"}
     s["MarkExpired"] = task("case_ops", "expire", "expire", "NotifyExpired")
     s["NotifyExpired"] = info("expired", "notify_expired", "DoneExpired",
@@ -147,10 +146,7 @@ def build() -> dict:
     s["SetBlockedError"] = {"Type": "Pass", "ResultPath": "$.error", "Next": "FailSafe", "Result": {
         "Error": "RestoreBlocked", "Cause": "restore validation failed after the maximum number of attempts"}}
     s["ExecuteRestore"] = task("restore", "execute", "execute_restore", "VerifyRestore")
-    s["VerifyRestore"] = task("restore", "verify", "verify_restore", "WasFalsePositive")
-    s["WasFalsePositive"] = {"Type": "Choice", "Default": "NotifyRestored", "Choices": [
-        {"Variable": "$.restore_decision.decision", "StringEquals": "restore_fp", "Next": "RecordFeedbackFP"}]}
-    s["RecordFeedbackFP"] = task("case_ops", "feedback", "feedback", "NotifyRestored")
+    s["VerifyRestore"] = task("restore", "verify", "verify_restore", "NotifyRestored")
     s["NotifyRestored"] = info("restored", "notify_restored", "DoneRestored",
                                catch=[{"ErrorEquals": ["States.ALL"], "ResultPath": "$.notify_error", "Next": "DoneRestored"}])
     s["DoneRestored"] = {"Type": "Succeed"}

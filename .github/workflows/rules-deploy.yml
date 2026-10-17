@@ -4,7 +4,7 @@ name: rules-deploy
 on:
   push:
     branches: [main]
-    paths: ["rules/**", "tools/rulesctl.py", "tools/rule_engine.py", "tools/release.py", "scripts/deploy_rules.sh"]
+    paths: ["rules/**", "tools/rulesctl.py", "tools/release.py", "scripts/deploy_rules.sh"]
   workflow_dispatch:
     inputs:
       rollback_sha:
@@ -20,7 +20,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  AWS_REGION: ap-southeast-1
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
 
 jobs:
   deploy:
@@ -35,7 +35,7 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: requirements-dev.txt
-      - run: pip install pyyaml boto3
+      - run: pip install pyyaml boto3 suricata-update
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.RULES_ROLE_ARN }}
@@ -43,13 +43,13 @@ jobs:
 
       - name: Rollback to an earlier release
         if: inputs.rollback_sha != ''
-        run: python -m tools.release rollback --sha "${{ inputs.rollback_sha }}"
+        env:
+          ROLLBACK_SHA: ${{ inputs.rollback_sha }}
+        run: python -m tools.release rollback --sha "$ROLLBACK_SHA"
 
-      - name: Gate (same checks as PR CI, never deploy an unchecked tree)
+      - name: Gate (lint; the behavioural tests ran on real Wazuh/Suricata in PR CI, hosts re-validate on deploy)
         if: inputs.rollback_sha == ''
-        run: |
-          python -m tools.rulesctl lint
-          python -m tools.rulesctl test
+        run: python -m tools.rulesctl lint
       - name: Build release
         if: inputs.rollback_sha == ''
         run: python -m tools.rulesctl build --out dist --sha "${GITHUB_SHA}"

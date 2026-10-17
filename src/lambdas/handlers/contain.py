@@ -46,8 +46,9 @@ def _verify(case, event, store):
     if plan["type"] == PLAN_EC2:
         info = response.describe_instance(plan["params"]["instance_id"])
         sg = (case.get("isolation") or {}).get("isolation_sg")
-        ok = dry or info["security_groups"] == [sg]
-        summary = f"security groups now {info['security_groups']}, instance {info['state']}"
+        ok = dry or response.is_isolated(info, sg)  # every interface, not just the primary one
+        summary = (f"security groups now {info['security_groups']} (interfaces {response.eni_groups(info)}), "
+                   f"instance {info['state']}")
     else:
         keys = response.list_keys(plan["params"]["user_name"])
         ok = dry or keys.get(plan["params"]["access_key_id"]) == "Inactive"

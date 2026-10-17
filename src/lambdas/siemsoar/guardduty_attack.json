@@ -1,0 +1,517 @@
+{
+ "active_types_without_mapping": [
+  "AttackSequence:EC2/CompromisedInstanceGroup",
+  "AttackSequence:ECS/CompromisedCluster",
+  "AttackSequence:EKS/CompromisedCluster",
+  "AttackSequence:S3/CompromisedData",
+  "Backdoor:EC2/Spambot",
+  "Backdoor:Lambda/C&CActivity.B",
+  "Backdoor:Runtime/C&CActivity.B",
+  "Backdoor:Runtime/C&CActivity.B!DNS",
+  "CredentialAccess:IAMUser/CompromisedCredentials",
+  "CredentialAccess:Kubernetes/AnomalousBehavior.SecretsAccessed",
+  "CredentialAccess:Kubernetes/MaliciousIPCaller",
+  "CredentialAccess:Kubernetes/MaliciousIPCaller.Custom",
+  "CredentialAccess:Kubernetes/SuccessfulAnonymousAccess",
+  "CredentialAccess:Kubernetes/TorIPCaller",
+  "CredentialAccess:RDS/AnomalousBehavior.FailedLogin",
+  "CredentialAccess:RDS/AnomalousBehavior.SuccessfulBruteForce",
+  "CredentialAccess:RDS/AnomalousBehavior.SuccessfulLogin",
+  "CredentialAccess:RDS/MaliciousIPCaller.FailedLogin",
+  "CredentialAccess:RDS/MaliciousIPCaller.SuccessfulLogin",
+  "CredentialAccess:RDS/TorIPCaller.FailedLogin",
+  "CredentialAccess:RDS/TorIPCaller.SuccessfulLogin",
+  "CryptoCurrency:Lambda/BitcoinTool.B",
+  "CryptoCurrency:Runtime/BitcoinTool.B",
+  "CryptoCurrency:Runtime/BitcoinTool.B!DNS",
+  "DefenseEvasion:EC2/UnusualDNSResolver",
+  "DefenseEvasion:EC2/UnusualDoHActivity",
+  "DefenseEvasion:EC2/UnusualDoTActivity",
+  "DefenseEvasion:IAMUser/BedrockLoggingDisabled",
+  "DefenseEvasion:Kubernetes/MaliciousIPCaller",
+  "DefenseEvasion:Kubernetes/MaliciousIPCaller.Custom",
+  "DefenseEvasion:Kubernetes/SuccessfulAnonymousAccess",
+  "DefenseEvasion:Kubernetes/TorIPCaller",
+  "DefenseEvasion:Runtime/FilelessExecution",
+  "DefenseEvasion:Runtime/KernelModuleLoaded",
+  "DefenseEvasion:Runtime/ProcessInjection.Proc",
+  "DefenseEvasion:Runtime/ProcessInjection.Ptrace",
+  "DefenseEvasion:Runtime/ProcessInjection.VirtualMemoryWrite",
+  "DefenseEvasion:Runtime/SensitiveFileModified",
+  "DefenseEvasion:Runtime/SuspiciousCommand",
+  "Discovery:Kubernetes/AnomalousBehavior.PermissionChecked",
+  "Discovery:Kubernetes/MaliciousIPCaller",
+  "Discovery:Kubernetes/MaliciousIPCaller.Custom",
+  "Discovery:Kubernetes/SuccessfulAnonymousAccess",
+  "Discovery:Kubernetes/TorIPCaller",
+  "Discovery:RDS/MaliciousIPCaller",
+  "Discovery:RDS/TorIPCaller",
+  "Discovery:Runtime/SuspiciousCommand",
+  "Discovery:S3/AnomalousBehavior",
+  "Execution:Container/MaliciousFile",
+  "Execution:Container/SuspiciousFile",
+  "Execution:EC2/MaliciousFile",
+  "Execution:EC2/MaliciousFile!AMI",
+  "Execution:EC2/MaliciousFile!RecoveryPoint",
+  "Execution:EC2/MaliciousFile!Snapshot",
+  "Execution:EC2/SuspiciousFile",
+  "Execution:ECS/MaliciousFile",
+  "Execution:ECS/SuspiciousFile",
+  "Execution:Kubernetes/AnomalousBehavior.ExecInPod",
+  "Execution:Kubernetes/AnomalousBehavior.WorkloadDeployed",
+  "Execution:Kubernetes/ExecInKubeSystemPod",
+  "Execution:Kubernetes/MaliciousFile",
+  "Execution:Kubernetes/SuspiciousFile",
+  "Execution:Runtime/MaliciousFileExecuted",
+  "Execution:Runtime/MaliciousFileExecuted.Custom",
+  "Execution:Runtime/NewBinaryExecuted",
+  "Execution:Runtime/NewLibraryLoaded",
+  "Execution:Runtime/ReverseShell",
+  "Execution:Runtime/SuspiciousCommand",
+  "Execution:Runtime/SuspiciousShellCreated",
+  "Execution:Runtime/SuspiciousTool",
+  "Execution:S3/MaliciousFile!RecoveryPoint",
+  "Exfiltration:RDS/AnomalousBehavior",
+  "Exfiltration:RDS/MaliciousIPCaller",
+  "Exfiltration:RDS/TorIPCaller",
+  "Exfiltration:S3/AnomalousBehavior",
+  "Impact:EC2/AbusedDomainRequest.Reputation",
+  "Impact:EC2/MaliciousDomainRequest.Custom",
+  "Impact:IAMUser/AnomalousModelInvocation",
+  "Impact:IAMUser/CostHarvesting",
+  "Impact:IAMUser/PromptInjection.Direct",
+  "Impact:Kubernetes/MaliciousIPCaller",
+  "Impact:Kubernetes/MaliciousIPCaller.Custom",
+  "Impact:Kubernetes/SuccessfulAnonymousAccess",
+  "Impact:Kubernetes/TorIPCaller",
+  "Impact:RDS/AnomalousBehavior.Delete",
+  "Impact:RDS/AnomalousBehavior.Drop",
+  "Impact:RDS/MaliciousIPCaller",
+  "Impact:RDS/TorIPCaller",
+  "Impact:Runtime/AbusedDomainRequest.Reputation",
+  "Impact:Runtime/BitcoinDomainRequest.Reputation",
+  "Impact:Runtime/CryptoMinerExecuted",
+  "Impact:Runtime/MaliciousDomainRequest.Reputation",
+  "Impact:Runtime/SuspiciousDomainRequest.Reputation",
+  "Impact:S3/AnomalousBehavior.Delete",
+  "Impact:S3/AnomalousBehavior.Permission",
+  "Impact:S3/AnomalousBehavior.Write",
+  "InitialAccess:IAMUser/AnomalousBehavior",
+  "Object:S3/MaliciousFile",
+  "Persistence:Kubernetes/AnomalousBehavior.WorkloadDeployed!ContainerWithSensitiveMount",
+  "Persistence:Kubernetes/MaliciousIPCaller",
+  "Persistence:Kubernetes/MaliciousIPCaller.Custom",
+  "Persistence:Kubernetes/SuccessfulAnonymousAccess",
+  "Persistence:Kubernetes/TorIPCaller",
+  "Persistence:Runtime/SensitiveFileModified",
+  "Persistence:Runtime/SuspiciousCommand",
+  "Policy:IAMUser/ShortTermRootCredentialUsage",
+  "Policy:Kubernetes/AdminAccessToDefaultServiceAccount",
+  "Policy:Kubernetes/AnonymousAccessGranted",
+  "Policy:Kubernetes/ExposedDashboard",
+  "Policy:Kubernetes/KubeflowDashboardExposed",
+  "PrivilegeEscalation:IAMUser/AnomalousBehavior",
+  "PrivilegeEscalation:Kubernetes/AnomalousBehavior.RoleBindingCreated",
+  "PrivilegeEscalation:Kubernetes/AnomalousBehavior.RoleCreated",
+  "PrivilegeEscalation:Kubernetes/AnomalousBehavior.WorkloadDeployed!PrivilegedContainer",
+  "PrivilegeEscalation:Runtime/CGroupsReleaseAgentModified",
+  "PrivilegeEscalation:Runtime/ContainerMountsHostDirectory",
+  "PrivilegeEscalation:Runtime/DockerSocketAccessed",
+  "PrivilegeEscalation:Runtime/ElevationToRoot",
+  "PrivilegeEscalation:Runtime/RuncContainerEscape",
+  "PrivilegeEscalation:Runtime/SensitiveFileModified",
+  "PrivilegeEscalation:Runtime/SuspiciousCommand",
+  "PrivilegeEscalation:Runtime/UserfaultfdUsage",
+  "Recon:IAMUser/TorIPCaller",
+  "Trojan:Lambda/BlackholeTraffic",
+  "Trojan:Lambda/DropPoint",
+  "Trojan:Runtime/BlackholeTraffic",
+  "Trojan:Runtime/BlackholeTraffic!DNS",
+  "Trojan:Runtime/DGADomainRequest.C!DNS",
+  "Trojan:Runtime/DriveBySourceTraffic!DNS",
+  "Trojan:Runtime/DropPoint",
+  "Trojan:Runtime/DropPoint!DNS",
+  "Trojan:Runtime/PhishingDomainRequest!DNS",
+  "UnauthorizedAccess:IAMUser/InstanceCredentialExfiltration.InsideAWS",
+  "UnauthorizedAccess:IAMUser/ResourceCredentialExfiltration.InsideAWS",
+  "UnauthorizedAccess:IAMUser/ResourceCredentialExfiltration.OutsideAWS",
+  "UnauthorizedAccess:Lambda/MaliciousIPCaller.Custom",
+  "UnauthorizedAccess:Lambda/TorClient",
+  "UnauthorizedAccess:Lambda/TorRelay",
+  "UnauthorizedAccess:Runtime/MetadataDNSRebind",
+  "UnauthorizedAccess:Runtime/TorClient",
+  "UnauthorizedAccess:Runtime/TorRelay"
+ ],
+ "checked_against": "https://docs.aws.amazon.com/guardduty/latest/ug/guardduty_finding-types-active.html",
+ "dropped": {},
+ "finding_types": {
+  "AttackSequence:IAM/CompromisedCredentials": [
+   "T1649"
+  ],
+  "Backdoor:EC2/C&CActivity.B": [
+   "T1071.001",
+   "T1071.002",
+   "T1071.003",
+   "T1071.004"
+  ],
+  "Backdoor:EC2/C&CActivity.B!DNS": [
+   "T1071.001",
+   "T1071.002",
+   "T1071.003",
+   "T1071.004"
+  ],
+  "Backdoor:EC2/DenialOfService.Dns": [
+   "T1498.001",
+   "T1498.002"
+  ],
+  "Backdoor:EC2/DenialOfService.Tcp": [
+   "T1498.001",
+   "T1498.002"
+  ],
+  "Backdoor:EC2/DenialOfService.Udp": [
+   "T1498.001",
+   "T1498.002"
+  ],
+  "Backdoor:EC2/DenialOfService.UdpOnTcpPorts": [
+   "T1498.001",
+   "T1498.002"
+  ],
+  "Backdoor:EC2/DenialOfService.UnusualProtocol": [
+   "T1498.001",
+   "T1498.002"
+  ],
+  "Behavior:EC2/NetworkPortUnusual": [
+   "T1571"
+  ],
+  "Behavior:EC2/TrafficVolumeUnusual": [
+   "T1029",
+   "T1041",
+   "T1048.003",
+   "T1567.001",
+   "T1567.002",
+   "T1567.003",
+   "T1567.004",
+   "T1020"
+  ],
+  "CredentialAccess:IAMUser/AnomalousBehavior": [
+   "T1078"
+  ],
+  "CryptoCurrency:EC2/BitcoinTool.B": [
+   "T1496"
+  ],
+  "CryptoCurrency:EC2/BitcoinTool.B!DNS": [
+   "T1496"
+  ],
+  "DefenseEvasion:IAMUser/AnomalousBehavior": [
+   "T1685",
+   "T1078"
+  ],
+  "DefenseEvasion:Runtime/PtraceAntiDebugging": [
+   "T1622"
+  ],
+  "Discovery:IAMUser/AnomalousBehavior": [
+   "T1619",
+   "T1580",
+   "T1078"
+  ],
+  "Discovery:S3/MaliciousIPCaller": [
+   "T1580"
+  ],
+  "Discovery:S3/MaliciousIPCaller.Custom": [
+   "T1580"
+  ],
+  "Discovery:S3/TorIPCaller": [
+   "T1580"
+  ],
+  "Exfiltration:IAMUser/AnomalousBehavior": [
+   "T1567.001",
+   "T1567.002",
+   "T1567.003",
+   "T1567.004",
+   "T1078"
+  ],
+  "Exfiltration:S3/MaliciousIPCaller": [
+   "T1567.001",
+   "T1567.002",
+   "T1567.003",
+   "T1567.004",
+   "T1020",
+   "T1491.001",
+   "T1491.002",
+   "T1530",
+   "T1552.001",
+   "T1685.002"
+  ],
+  "Exfiltration:S3/ObjectRead.Unusual": [
+   "T1567.001",
+   "T1567.002",
+   "T1567.003",
+   "T1567.004",
+   "T1020",
+   "T1491.001",
+   "T1491.002",
+   "T1530",
+   "T1552.001",
+   "T1685.002"
+  ],
+  "Impact:EC2/BitcoinDomainRequest.Reputation": [
+   "T1496"
+  ],
+  "Impact:EC2/MaliciousDomainRequest.Reputation": [
+   "T1071.001",
+   "T1071.002",
+   "T1071.003",
+   "T1071.004"
+  ],
+  "Impact:EC2/PortSweep": [
+   "T1046",
+   "T1595.001",
+   "T1595.002"
+  ],
+  "Impact:EC2/SuspiciousDomainRequest.Reputation": [
+   "T1071.001",
+   "T1071.002",
+   "T1071.003",
+   "T1071.004"
+  ],
+  "Impact:EC2/WinRMBruteForce": [
+   "T1110"
+  ],
+  "Impact:IAMUser/AnomalousBehavior": [
+   "T1059.009",
+   "T1531",
+   "T1485",
+   "T1078"
+  ],
+  "Impact:S3/MaliciousIPCaller": [
+   "T1565.001",
+   "T1486",
+   "T1485",
+   "T1491.001",
+   "T1491.002",
+   "T1530",
+   "T1552.001",
+   "T1685.002"
+  ],
+  "PenTest:IAMUser/KaliLinux": [
+   "T1580",
+   "T1078"
+  ],
+  "PenTest:IAMUser/ParrotLinux": [
+   "T1580",
+   "T1078"
+  ],
+  "PenTest:IAMUser/PentooLinux": [
+   "T1580",
+   "T1078"
+  ],
+  "PenTest:S3/KaliLinux": [
+   "T1486",
+   "T1020",
+   "T1485",
+   "T1491.001",
+   "T1491.002",
+   "T1530",
+   "T1552.001",
+   "T1580",
+   "T1685.002"
+  ],
+  "PenTest:S3/ParrotLinux": [
+   "T1486",
+   "T1020",
+   "T1485",
+   "T1491.001",
+   "T1491.002",
+   "T1530",
+   "T1552.001",
+   "T1580",
+   "T1685.002"
+  ],
+  "PenTest:S3/PentooLinux": [
+   "T1486",
+   "T1020",
+   "T1485",
+   "T1491.001",
+   "T1491.002",
+   "T1530",
+   "T1552.001",
+   "T1580",
+   "T1685.002"
+  ],
+  "Persistence:IAMUser/AnomalousBehavior": [
+   "T1098.001",
+   "T1098.004",
+   "T1078"
+  ],
+  "Policy:IAMUser/RootCredentialUsage": [
+   "T1078"
+  ],
+  "Policy:S3/AccountBlockPublicAccessDisabled": [
+   "T1078"
+  ],
+  "Policy:S3/BucketAnonymousAccessGranted": [
+   "T1078"
+  ],
+  "Policy:S3/BucketBlockPublicAccessDisabled": [
+   "T1078"
+  ],
+  "Policy:S3/BucketPublicAccessGranted": [
+   "T1078"
+  ],
+  "PrivilegeEscalation:IAMUser/AdministrativePermissions": [
+   "T1078"
+  ],
+  "Recon:EC2/PortProbeEMRUnprotectedPort": [
+   "T1046",
+   "T1595.001",
+   "T1595.002"
+  ],
+  "Recon:EC2/PortProbeUnprotectedPort": [
+   "T1046",
+   "T1595.001",
+   "T1595.002"
+  ],
+  "Recon:EC2/Portscan": [
+   "T1046",
+   "T1595.001",
+   "T1595.002"
+  ],
+  "Recon:IAMUser/MaliciousIPCaller": [
+   "T1078"
+  ],
+  "Recon:IAMUser/MaliciousIPCaller.Custom": [
+   "T1078"
+  ],
+  "Stealth:IAMUser/CloudTrailLoggingDisabled": [
+   "T1685.002"
+  ],
+  "Stealth:IAMUser/PasswordPolicyChange": [
+   "T1110",
+   "T1685.002"
+  ],
+  "Stealth:S3/ServerAccessLoggingDisabled": [
+   "T1486",
+   "T1485",
+   "T1685.002"
+  ],
+  "Trojan:EC2/BlackholeTraffic": [
+   "T1071.001",
+   "T1071.002",
+   "T1071.003",
+   "T1071.004"
+  ],
+  "Trojan:EC2/BlackholeTraffic!DNS": [
+   "T1071.001",
+   "T1071.002",
+   "T1071.003",
+   "T1071.004"
+  ],
+  "Trojan:EC2/DGADomainRequest.B": [
+   "T1568.002"
+  ],
+  "Trojan:EC2/DGADomainRequest.C!DNS": [
+   "T1568.002"
+  ],
+  "Trojan:EC2/DNSDataExfiltration": [
+   "T1048.003"
+  ],
+  "Trojan:EC2/DriveBySourceTraffic!DNS": [
+   "T1189"
+  ],
+  "Trojan:EC2/DropPoint": [
+   "T1071.001",
+   "T1071.002",
+   "T1071.003",
+   "T1071.004"
+  ],
+  "Trojan:EC2/DropPoint!DNS": [
+   "T1071.001",
+   "T1071.002",
+   "T1071.003",
+   "T1071.004"
+  ],
+  "Trojan:EC2/PhishingDomainRequest!DNS": [
+   "T1566"
+  ],
+  "UnauthorizedAccess:EC2/MaliciousIPCaller.Custom": [
+   "T1071.001",
+   "T1071.002",
+   "T1071.003",
+   "T1071.004"
+  ],
+  "UnauthorizedAccess:EC2/MetadataDNSRebind": [
+   "T1190"
+  ],
+  "UnauthorizedAccess:EC2/RDPBruteForce": [
+   "T1110"
+  ],
+  "UnauthorizedAccess:EC2/SSHBruteForce": [
+   "T1110"
+  ],
+  "UnauthorizedAccess:EC2/TorClient": [
+   "T1090.001",
+   "T1090.002",
+   "T1090.003"
+  ],
+  "UnauthorizedAccess:EC2/TorRelay": [
+   "T1090",
+   "T1496"
+  ],
+  "UnauthorizedAccess:IAMUser/ConsoleLogin": [
+   "T1078"
+  ],
+  "UnauthorizedAccess:IAMUser/ConsoleLoginSuccess.B": [
+   "T1021.008",
+   "T1078"
+  ],
+  "UnauthorizedAccess:IAMUser/InstanceCredentialExfiltration.OutsideAWS": [
+   "T1552.005",
+   "T1078"
+  ],
+  "UnauthorizedAccess:IAMUser/MaliciousIPCaller": [
+   "T1078"
+  ],
+  "UnauthorizedAccess:IAMUser/MaliciousIPCaller.Custom": [
+   "T1078"
+  ],
+  "UnauthorizedAccess:IAMUser/TorIPCaller": [
+   "T1078"
+  ],
+  "UnauthorizedAccess:S3/MaliciousIPCaller.Custom": [
+   "T1486",
+   "T1020",
+   "T1485",
+   "T1491.001",
+   "T1491.002",
+   "T1530",
+   "T1552.001",
+   "T1685.002"
+  ],
+  "UnauthorizedAccess:S3/TorIPCaller": [
+   "T1486",
+   "T1020",
+   "T1485",
+   "T1491.001",
+   "T1491.002",
+   "T1530",
+   "T1552.001",
+   "T1685.002"
+  ]
+ },
+ "framework": "MITRE CTID Mappings Explorer - AWS",
+ "framework_release": "12/12/2024",
+ "generated_at": "2026-10-15T02:20:39Z",
+ "kind": "guardduty-attack-mapping",
+ "mapped_to_attack": "16.1",
+ "renamed_by_aws": {
+  "UnauthorizedAccess:IAMUser/InstanceCredentialExfiltration": "UnauthorizedAccess:IAMUser/InstanceCredentialExfiltration.OutsideAWS"
+ },
+ "resolved_against_attack": "20.0",
+ "retired_finding_types": [
+  "Exfiltration:S3/ObjectRead.Unusual",
+  "PrivilegeEscalation:IAMUser/AdministrativePermissions",
+  "UnauthorizedAccess:IAMUser/ConsoleLogin"
+ ],
+ "source": "https://raw.githubusercontent.com/center-for-threat-informed-defense/mappings-explorer/a85e55af3c9fa55359a98621745b9b039a088bec/mappings/aws/attack-16.1/aws-12.12.2024/enterprise/aws-12.12.2024_attack-16.1-enterprise.json",
+ "upstream_sha256": "21d88ec6db69269e6bd59e6626d6461242bb5e621472d6b992c788142e068004"
+}

@@ -1,0 +1,13 @@
+id: aws-stratus-cloudtrail-stop
+title: AWS technique - stop a CloudTrail trail (Stratus Red Team), detected by GuardDuty
+kind: stratus
+malicious: true
+stratus_technique: aws.defense-evasion.cloudtrail-stop
+detonate_as: victim       # the simulation-zone IAM user (lab-victim): the finding names its key, so iam_key_disable runs
+documented_detection:     # Stratus' own page names the GuardDuty finding this technique raises
+  finding_type: 'Stealth:IAMUser/CloudTrailLoggingDisabled'
+  url: https://stratus-red-team.cloud/attack-techniques/AWS/aws.defense-evasion.cloudtrail-stop/
+expect:
+  - {source: guardduty, rule_id: 'Stealth:IAMUser/CloudTrailLoggingDisabled', case: true}
+settle_seconds: 900
+notes: Stratus warms up (creates its own trail) with the operator's credentials and detonates with lab-victim's key.

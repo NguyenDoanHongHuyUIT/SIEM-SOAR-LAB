@@ -72,6 +72,16 @@ def test_breaker_is_idempotent_per_case_and_trips(store):
     assert store.breaker_register("C-3", 2, 3600) == (3, True)
 
 
+def test_breaker_trips_on_a_burst_that_straddles_a_bucket_boundary(store):
+    edge = 3600 * 500_000  # a bucket boundary
+    assert store.breaker_register("C-1", 2, 3600, now=edge - 1) == (1, False)
+    assert store.breaker_register("C-2", 2, 3600, now=edge - 1) == (2, False)
+    # 2 s later, new bucket: counting the current bucket only would restart at 1 and never trip
+    assert store.breaker_register("C-3", 2, 3600, now=edge + 1) == (3, True)
+    # two buckets later the old attempts no longer count
+    assert store.breaker_register("C-4", 2, 3600, now=edge + 2 * 3600 + 1) == (1, False)
+
+
 def test_resource_and_status_indexes(store):
     store.create_case(_case("C-1"))
     store.create_case(_case("C-2", resource_id="i-2"))

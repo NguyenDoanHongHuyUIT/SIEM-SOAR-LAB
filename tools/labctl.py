@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 from datetime import UTC, datetime, timedelta
@@ -23,7 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "lambdas"))
 
 from botocore.exceptions import ClientError  # noqa: E402
-from siemsoar import aws  # noqa: E402
+from siemsoar import aws, response  # noqa: E402
 
 MAX_HOURS = 12
 STOP_TARGET = "arn:aws:scheduler:::aws-sdk:ec2:stopInstances"
@@ -31,14 +32,8 @@ LIVE_STATES = ["pending", "running", "stopping", "stopped"]
 
 
 def instances() -> list[dict]:
-    res = aws.client("ec2").describe_instances(Filters=[
-        {"Name": "tag:siemsoar:plane", "Values": ["ondemand"]}, {"Name": "instance-state-name", "Values": LIVE_STATES}])
-    out = []
-    for r in res["Reservations"]:
-        for i in r["Instances"]:
-            tags = {t["Key"]: t["Value"] for t in i.get("Tags", [])}
-            out.append({"id": i["InstanceId"], "state": i["State"]["Name"], "role": tags.get("siemsoar:role")})
-    return out
+    found = response.find_instances({"siemsoar:plane": "ondemand"}, tuple(LIVE_STATES))
+    return [{"id": i["id"], "state": i["state"], "role": i["tags"].get("siemsoar:role")} for i in found]
 
 
 def schedule_name(prefix: str) -> str:
@@ -59,6 +54,8 @@ def disarm_timer(prefix: str) -> None:
 
 
 def arm_timer(prefix: str, hours: float, ids: list[str]) -> str:
+    if not math.isfinite(hours) or hours <= 0:
+        raise ValueError("hours must be a finite number greater than zero")
     if not ids:
         raise SystemExit("no lab instances found (is the on-demand plane applied? tag siemsoar:plane=ondemand)")
     when = (datetime.now(UTC) + timedelta(hours=min(hours, MAX_HOURS))).strftime("%Y-%m-%dT%H:%M:%S")

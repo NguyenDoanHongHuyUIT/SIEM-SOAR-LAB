@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+import logging
+
 from botocore.exceptions import ClientError
 
 from . import aws, faults, slack
 from .config import settings
 from .ssm import get_param
-from .util import get_logger
 
-log = get_logger("notify")
+log = logging.getLogger("notify")
 
 
 def sns_publish(subject: str, text: str) -> None:

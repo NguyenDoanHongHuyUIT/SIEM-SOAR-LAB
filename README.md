@@ -50,17 +50,17 @@ Chi tiết: [docs/architecture.md](docs/architecture.md).
 | Thư mục | Nội dung |
 |---|---|
 | `infra/bootstrap` | State bucket + OIDC GitHub↔AWS với 3 role (plan chỉ đọc, apply theo Environment, rules least-privilege) |
-| `infra/modules/serverless-core` | Mặt phẳng always-on: DynamoDB, S3 (evidence Object Lock, CloudTrail, rules), GuardDuty, CloudTrail, EventBridge+DLQ, 10 Lambda (role riêng, least privilege), Step Functions, API Gateway, SSM params, alarm, Budgets, timer tự tắt |
+| `infra/modules/serverless-core` | Mặt phẳng always-on: DynamoDB, S3 (evidence Object Lock, CloudTrail, rules), GuardDuty, CloudTrail, EventBridge+DLQ, 9 Lambda (role riêng, least privilege), Step Functions, API Gateway, SSM params, alarm, Budgets, timer tự tắt |
 | `infra/modules/lab-ondemand` | Mặt phẳng on-demand: VPC không cổng vào, Wazuh all-in-one, EC2 lab (Wazuh Agent + Suricata), IMDSv2, SSM document deploy rule, IAM victim user |
-| `src/lambdas/siemsoar` | Thư viện lõi: schema chuẩn hóa, store DynamoDB (state machine case, dedup nguyên tử, token một lần, circuit breaker), Slack, evidence, response (EC2/IAM) |
+| `src/lambdas/siemsoar` | Thư viện lõi: schema chuẩn hóa **điều khiển bằng `policy.toml`** (thang severity, ánh xạ response/ATT&CK, trường ngữ cảnh, khóa dedup, trọng số rủi ro: ATT&CK của GuardDuty lấy từ MITRE CTID qua `guardduty_attack.json`; giá trị còn lại ghi rõ nguồn hoặc `basis = "analyst"`), store DynamoDB (state machine case, dedup nguyên tử, token một lần, circuit breaker), Slack, evidence, response (EC2 mọi ENI / IAM) |
 | `src/lambdas/handlers` | Lambda handler: `ingest`, `enrich`, `notify`, `slack_interact`, `preflight`, `save_state`, `contain`, `restore`, `case_ops` (stop instance / disable key / audit rows là **SDK integration** của Step Functions, không phải Lambda) |
 | `statemachine/` | Case workflow (sinh bởi `tools/gen_asl.py`, có `--check` trong CI) |
-| `rules/` | Wazuh XML, Suricata rules, **metadata YAML** (state, MITRE, FP kỳ vọng, test dương/âm) |
-| `tools/` | `rulesctl` (lint/test/lifecycle/build/promote/coverage/tune), `rule_engine` (lọc sơ bộ offline), `wazuh_logtest` (rule trên engine Wazuh thật), `suricata_pcap_test`, `make_pcaps` (Scapy), `release`, `labctl` (bật/tắt lab + timer), `soarctl`, `export_evidence`, `gen_asl` |
+| `rules/` | Wazuh XML, Suricata rules, **metadata YAML** (state, MITRE, `wraps` = rule Wazuh chính thức mà rule này đứng trên, FP kỳ vọng, test dương/âm), `reference/` = **ảnh chụp có ghim phiên bản** của ATT&CK (STIX chính thức) và ruleset Wazuh 4.14.8 kèm SHA-256 nguồn |
+| `tools/` | `rulesctl` (lint/lifecycle/build/promote/coverage/tune), `wazuh_logtest` (mọi test rule Wazuh chạy trên engine Wazuh thật: logtest API + hàng đợi analysisd cho FIM), `suricata_pcap_test` (mọi test rule Suricata chạy trên Suricata thật), `capture_pcaps` (bắt pcap từ thủ tục Atomic chạy thật trong Docker, kèm provenance), `release`, `labctl` (bật/tắt lab + timer), `soarctl`, `export_evidence`, `gen_asl`, `refdata` (dựng ảnh chụp tham chiếu), `refcheck` (mọi link được trích dẫn còn sống), `eve_logtest` (Suricata thật → EVE thật → logtest Wazuh thật: kiểm tra rule ánh xạ, group, MITRE) |
 | `wazuh/`, `suricata/`, `scripts/` | Bootstrap manager/agent/sensor, integration `custom-eventbridge`, `deploy_rules.sh` (kiểm tra + tự rollback trên host) |
-| `simulation/` | 14 kịch bản có ground truth (host: Atomic Red Team `atomic` + kịch bản tự viết khi ART không có atomic tương ứng; AWS; network; robustness) + runner; kịch bản vòng đời rule chạy qua pipeline CI/CD (xem `docs/detection-as-code.md`) |
-| `evaluation/` | Tính toàn bộ chỉ số của đề cương từ dữ liệu thật + baseline + chi phí |
-| `tests/` | 130+ test (moto): unit, workflow end-to-end chạy **đúng ASL thật** với handler thật; `tests/contract` kiểm ASL bằng **TestState API** của AWS (chạy khi có `RUN_TESTSTATE=1`) |
+| `simulation/` | 15 kịch bản có ground truth (host: Atomic Red Team `atomic` + kịch bản tự viết khi ART không có atomic tương ứng; AWS; network; robustness) + runner; kịch bản vòng đời rule chạy qua pipeline CI/CD (xem `docs/detection-as-code.md`) |
+| `evaluation/` | Tính chỉ số của đề cương từ dữ liệu thật. Số giờ lab, baseline thủ công và chi phí đọc từ **CloudTrail, GuardDuty, Cost Explorer, AWS Pricing API** (`sources.py`), không nhập tay, không hằng số giá |
+| `tests/` | 280+ test (moto): unit, workflow end-to-end chạy **đúng ASL thật** với handler thật; `tests/contract` kiểm ASL bằng **TestState API** của AWS (chạy khi có `RUN_TESTSTATE=1`) |
 | `.github/` | CI, Terraform plan/apply, `rules-deploy`, `lab-session`, PR template |
 
 ## Bắt đầu nhanh
@@ -76,20 +76,34 @@ Triển khai thật (chi tiết từng bước, kể cả tạo Slack App: [docs
 3. Merge → workflow `terraform` apply. Mặc định `dry_run=true`: workflow chạy trọn vẹn nhưng chưa thay đổi EC2/IAM.
 4. Đặt secret Slack vào SSM (không qua Terraform state), xác nhận email SNS.
 5. Actions → **lab-session** → `up` (bật Wazuh + EC2 lab, tự tắt sau N giờ).
-6. `python -m simulation.runner run host-marker` rồi `python -m evaluation.evaluate`.
+6. `python -m simulation.runner run host-useradd` (Atomic Red Team T1136.001 thật) rồi `python -m evaluation.evaluate`.
 
 ## Trạng thái kiểm chứng (trung thực)
 
 | Hạng mục | Đã kiểm chứng bằng | Chưa kiểm chứng |
 |---|---|---|
-| Logic case, dedup, token một lần, double-click, breaker, fail-safe, restore, IAM key rotation | 120+ test với moto, workflow chạy đúng ASL + handler thật | Hành vi AWS thật (moto không mô phỏng hết ràng buộc IAM/SG) |
-| Rule Suricata | `suricata -T` + replay pcap bằng **Suricata thật** (3 TP, benign = 0 alert) | Hiệu năng/độ nhiễu trên traffic thật |
-| Rule Wazuh | Mini-engine offline (lọc sơ bộ) + job CI `wazuh-engine` (`wazuh-analysisd -t` và `wazuh-logtest` trên image Wazuh chính thức) | Mẫu log thô trong metadata còn là bản nháp: xác nhận ở lần chạy CI đầu tiên |
+| Logic case, dedup, token một lần, double-click, breaker, fail-safe, restore (mọi ENI), IAM key rotation idempotent, phân giải agent→instance | 280+ test với moto, workflow chạy đúng ASL + handler thật | Hành vi AWS thật (moto không mô phỏng hết ràng buộc IAM/SG) |
+| Rule Suricata | `suricata -T` + replay pcap **bắt từ thủ tục Atomic thật** bằng **Suricata thật** với rule ET Open ghim; pcap lành tính không được kích hoạt rule active; `eve_logtest`: alert EVE thật → rule Wazuh thật (id khai trong metadata, group `siemsoar_<state>`, MITRE) | Độ nhiễu trên traffic production |
+| Rule Wazuh | Job CI `wazuh-engine`: `wazuh-analysisd -t` + mọi test trong metadata (log thô qua logtest API, sự kiện FIM qua hàng đợi analysisd) trên image Wazuh 4.14.8 chính thức; chạy tay 23/23 PASS, kể cả rule bọc rule chính thức 5763/5712 với đúng ngưỡng 8 sự kiện | Hành vi theo thời gian thật của `frequency/timeframe` (engine đếm theo thời điểm nhận) |
 | Terraform | `fmt`, `validate`, `terraform test` (plan đầy đủ với provider mock, có/không có mặt phẳng lab) | `plan/apply` trên tài khoản thật |
 | Bootstrap Wazuh/Suricata | `bash -n` + shellcheck | Chạy thật trên Ubuntu 22.04 (cần tinh chỉnh theo phiên bản Wazuh) |
 
 Nghĩa là: **phần phần mềm/logic đã được test kỹ; phần chạm hạ tầng thật cần chạy phiên đầu tiên với `dry_run=true`**
 và theo checklist trong runbook.
+
+## Nguồn gốc dữ liệu (không bịa)
+
+| Loại dữ liệu | Nguồn | Ghi chú |
+|---|---|---|
+| Phát hiện host | Rule Wazuh **chính thức** (550, 5902, 5712, 5763 …) làm gốc; rule SIEMSOAR chỉ đứng trên chúng (`<if_sid>`), không tự đếm lại ngưỡng | `rulesctl lint` kiểm mọi rule cha có trong ruleset Wazuh 4.14.8 đã ghim (`rules/reference/wazuh-4.14.8.json`) và id tùy biến không trùng id chính thức |
+| ATT&CK | STIX chính thức của MITRE (v20.0) ghim trong `rules/reference/` | lint từ chối id không tồn tại, đã **revoked** (T1562.008 → T1685.002) hoặc deprecated. GuardDuty không công bố ánh xạ ATT&CK nên dùng ánh xạ độc lập của **MITRE CTID (Mappings Explorer / AWS, 12/2024)**, ghim theo commit + SHA-256 và sinh bằng `python -m tools.refdata guardduty` (id bị thu hồi được đổi theo quan hệ `revoked-by` của ATT&CK). Finding type CTID không liệt kê thì để trống, không đoán; ghi đè cục bộ phải kèm `basis` + `reason` |
+| Tham chiếu trích dẫn | `python -m tools.refcheck` (CI hằng tuần) kiểm mọi URL còn sống | 18/18 hợp lệ khi kiểm |
+| Phát hiện mạng | **Emerging Threats Open** (rule cộng đồng, BSD) được chọn qua metadata, nội dung ghim theo bản phát hành ET (`rules/reference/et-open-managed.json`) | không còn chữ ký tự viết khớp pcap tự dựng |
+| Tấn công mô phỏng | Atomic Red Team (YAML gốc, ghim commit, 8 test cho host và mạng), Stratus Red Team (`cloudtrail-stop`, finding GuardDuty theo tài liệu Stratus), GuardDuty sample finding (đánh dấu `pipeline_only`); một thủ tục lab tự viết (`host-ssh-burst-existing`) được ghi rõ là không làm bằng chứng | kỹ thuật ATT&CK của kịch bản **được suy ra** từ chỉ mục ART / CTID / provenance pcap, không gõ tay; không còn event/finding bơm giả |
+| Nhãn ATT&CK của rule | MITRE trên rule Wazuh chính thức được bọc, hoặc thủ tục Atomic/Stratus đã kích hoạt rule | `rulesctl lint` từ chối nhãn không có nguồn và kịch bản mâu thuẫn với nhãn của rule |
+| Danh mục finding GuardDuty | trang "Active/Retired finding types" + lịch sử tài liệu của AWS (`rules/reference/guardduty-finding-types.json`) | tên finding trong CTID và trong kịch bản phải là tên AWS công bố; đổi tên theo đúng câu "has been changed to" của AWS |
+| Số đo | CloudTrail (giờ lab, hành động cách ly thủ công), GuardDuty (thời điểm finding), Cost Explorer (chi phí thật theo tag `Project`), Pricing API (giá niêm yết) | thiếu quyền/thẻ chưa kích hoạt thì báo "không lấy được", không điền số |
+| **Fixture (không phải bằng chứng phát hiện)** | dòng log mẫu trong metadata Wazuh và sự kiện FIM tiêm vào hàng đợi analysisd; pcap Suricata bắt từ thủ tục Atomic chạy trong Docker (`rules/pcaps/provenance.json`: lệnh, digest image, SHA-256) | unit-test rule trên engine thật; kết quả không đưa vào chỉ số TP/FP. Chất lượng phát hiện chỉ lấy từ các lượt chạy trên lab |
 
 ## Ánh xạ đề cương ↔ code
 

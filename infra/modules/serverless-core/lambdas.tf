@@ -71,6 +71,13 @@ locals {
       actions   = ["ec2:ModifyInstanceAttribute"]
       resources = ["${local.ec2_arn}:security-group/*", "${local.ec2_arn}:network-interface/*"]
     }
+    # Secondary ENIs are changed with their own API call (ModifyInstanceAttribute only reaches the primary one). AWS
+    # offers no instance-tag condition for ModifyNetworkInterfaceAttribute on a network-interface, so the zone check is
+    # enforced by the preflight handler (instance tag) and IAM is limited to ENIs of this account/region.
+    ec2_modify_eni = {
+      actions   = ["ec2:ModifyNetworkInterfaceAttribute"]
+      resources = ["${local.ec2_arn}:network-interface/*", "${local.ec2_arn}:security-group/*"]
+    }
     ec2_sg_create_vpc = { actions = ["ec2:CreateSecurityGroup"], resources = ["${local.ec2_arn}:vpc/*"] }
     ec2_sg_create = {
       actions   = ["ec2:CreateSecurityGroup"]
@@ -122,7 +129,7 @@ locals {
       resources = ["${local.iam_arn}:instance-profile/${var.name_prefix}-lab-*"]
     }
     secrets_rotate = {
-      actions   = ["secretsmanager:CreateSecret", "secretsmanager:PutSecretValue"]
+      actions   = ["secretsmanager:CreateSecret", "secretsmanager:PutSecretValue", "secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
       resources = ["arn:aws:secretsmanager:${local.region}:${local.account_id}:secret:/${var.name_prefix}/rotated-keys/*"]
     }
     sfn_start = { actions = ["states:StartExecution"], resources = [local.sfn_arn] }
@@ -148,7 +155,7 @@ locals {
     }
     preflight = {
       timeout    = 30, memory = 256
-      statements = [local.st.ddb, local.st.ec2_read, local.st.ec2_modify_instance, local.st.ec2_sg_attach, local.st.iam_user_read]
+      statements = [local.st.ddb, local.st.ec2_read, local.st.ec2_modify_instance, local.st.ec2_sg_attach, local.st.ec2_modify_eni, local.st.iam_user_read]
     }
     save_state = {
       timeout = 30, memory = 256
@@ -161,7 +168,7 @@ locals {
       timeout = 60, memory = 256
       statements = [
         local.st.ddb, local.st.s3_case_ro, local.st.s3_list, local.st.ec2_read, local.st.ec2_sg_read,
-        local.st.ec2_modify_instance, local.st.ec2_contain_instance, local.st.ec2_sg_attach,
+        local.st.ec2_modify_instance, local.st.ec2_contain_instance, local.st.ec2_sg_attach, local.st.ec2_modify_eni,
         local.st.ec2_sg_create_vpc, local.st.ec2_sg_create, local.st.ec2_sg_tag, local.st.ec2_sg_revoke_egress,
         local.st.ec2_snapshot, local.st.iam_user_read, local.st.iam_user_contain, local.st.iam_role_contain,
       ]
@@ -170,7 +177,8 @@ locals {
       timeout = 60, memory = 256
       statements = [
         local.st.ddb, local.st.ddb_query, local.st.s3_case_ro, local.st.s3_list, local.st.ec2_read,
-        local.st.ec2_modify_instance, local.st.ec2_restore_instance, local.st.ec2_sg_attach, local.st.iam_user_read,
+        local.st.ec2_modify_instance, local.st.ec2_restore_instance, local.st.ec2_sg_attach, local.st.ec2_modify_eni,
+        local.st.iam_user_read,
         local.st.iam_user_restore, local.st.iam_role_restore, local.st.secrets_rotate,
       ]
     }
@@ -195,7 +203,6 @@ locals {
     DRY_RUN                  = tostring(var.dry_run)
     IAM_TARGET_PREFIX        = var.iam_target_prefix
     SLACK_CHANNEL            = var.slack_channel
-    LOG_LEVEL                = "INFO"
     LAB_FAULTS_ENABLED       = tostring(var.enable_fault_injection)
     FAULT_INJECT             = ""
   }
@@ -271,6 +278,14 @@ resource "aws_lambda_function" "fn" {
 
   environment {
     variables = local.common_env
+  }
+
+  # Native structured logs: the runtime emits JSON for plain `logging` calls (extra={...} becomes fields)
+  logging_config {
+    log_format            = "JSON"
+    application_log_level = "INFO"
+    system_log_level      = "WARN"
+    log_group             = aws_cloudwatch_log_group.fn[each.key].name
   }
 
   depends_on = [aws_cloudwatch_log_group.fn, aws_iam_role_policy.fn]

@@ -16,15 +16,21 @@ log "instance=$INSTANCE_ID iface=$IFACE manager=$MANAGER_IP"
 apt-get install -y software-properties-common
 add-apt-repository -y ppa:oisf/suricata-stable
 apt-get update -y
-apt-get install -y suricata tcpreplay jq python3-yaml python3-venv
-# Atomic Red Team runner (simulation scenarios of kind `atomic`). atomic-operator 0.9.x does not declare `attrs`.
-python3 -m venv /opt/siemsoar/art-venv
-/opt/siemsoar/art-venv/bin/pip install --quiet atomic-operator attrs
+# tcpreplay: pcap_replay scenarios; python3-yaml: scripts/run_atomic.py; the rest are the prerequisites the lab's Atomic Red
+# Team tests declare (T1046 test 2: nmap, telnet, nc; T1110.004 test 1: sshpass)
+apt-get install -y suricata tcpreplay jq python3-yaml sshpass nmap telnet netcat-openbsd
 mkdir -p /opt/atomic-red-team/atomics
 sed -i "s/interface: eth0/interface: ${IFACE}/" /etc/suricata/suricata.yaml
+# Inspect traffic between lab hosts too: ET rules are written $EXTERNAL_NET -> $HOME_NET and every lab address is inside
+# HOME_NET. Same value as tools/suricata_pcap_test.SENSOR_VARS, which the CI replay uses.
+sed -i -E 's/^([[:space:]]*EXTERNAL_NET:).*/\1 "any"/' /etc/suricata/suricata.yaml
 grep -q "siemsoar.rules" /etc/suricata/suricata.yaml || sed -i '/^rule-files:/a\  - siemsoar.rules' /etc/suricata/suricata.yaml
 mkdir -p /var/lib/suricata/rules
 touch /var/lib/suricata/rules/siemsoar.rules /var/lib/suricata/rules/suricata.rules
+# Broad, community-maintained detection comes from the Emerging Threats Open ruleset (suricata-update enables it by
+# default and writes suricata.rules). Those alerts reach Wazuh as plain Suricata events (rule 86601) so analysts see
+# them, while only the curated SIEMSOAR rules (siemsoar.rules + their Wazuh mapping rules) can open cases.
+suricata-update --no-reload || log "suricata-update failed: continuing with the SIEMSOAR rules only"
 bash "$BOOT/scripts/deploy_rules.sh" sensor current || log "no rule release yet, skipping"
 systemctl enable suricata
 systemctl restart suricata

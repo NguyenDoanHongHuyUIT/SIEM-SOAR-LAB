@@ -53,19 +53,38 @@ def test_each_test_gets_a_fresh_session():
     assert c.closed == ["tok1", "tok2"]
 
 
-def test_run_all_skips_rules_without_raw_samples_and_reports_state():
+def test_run_all_ignores_suricata_and_fails_tests_nothing_can_run():
     meta = {"wazuh-1": {"engine": "wazuh", "rule_id": 1, "state": "active",
-                        "tests": [{"name": "structured only", "expect": "match", "event": {}}]},
+                        "tests": [{"name": "hand written", "expect": "match", "event": {}}]},
             "suricata-9": {"engine": "suricata", "rule_id": 9, "tests": []}}
     res = wl.run_all(FakeClient(), meta)
-    assert [(r.rule, r.status) for r in res] == [("wazuh-1", "SKIP")]
+    assert [(r.rule, r.status) for r in res] == [("wazuh-1", "FAIL")]
 
 
-def test_repository_samples_are_well_formed_and_mini_engine_ignores_them():
-    meta = rulesctl.load_metadata()
-    with_raw = [m for m in meta.values() if m["engine"] == "wazuh" and any(wl.lines_of(t) for t in m["tests"])]
-    assert with_raw, "at least one rule must carry raw-log samples"
-    assert all(r[2] for r in rulesctl.run_tests())  # raw-log tests must not break the offline mini-engine
+class FakeFim:
+    def __init__(self, rule):
+        self.rule, self.calls = rule, []
+
+    def rule_for(self, path, kind="modified"):
+        self.calls.append((path, kind))
+        return self.rule if path == "/etc/passwd" else "550"
+
+
+def test_fim_tests_use_the_queue_and_skip_without_a_container():
+    meta = {"wazuh-100100": {"engine": "wazuh", "rule_id": 100100, "state": "active", "tests": [
+        {"name": "hit", "expect": "match", "fim": {"path": "/etc/passwd"}},
+        {"name": "miss", "expect": "no_match", "fim": {"path": "/etc/hosts", "type": "added"}}]}}
+    fim = FakeFim("100100")
+    assert [r.status for r in wl.run_all(FakeClient(), meta, fim)] == ["PASS", "PASS"]
+    assert fim.calls == [("/etc/passwd", "modified"), ("/etc/hosts", "added")]
+    assert [r.status for r in wl.run_all(FakeClient(), meta)] == ["SKIP", "SKIP"]
+    assert [r.status for r in wl.run_all(FakeClient(), meta, FakeFim("550"))] == ["FAIL", "PASS"]
+
+
+def test_repository_wazuh_tests_are_all_executable_on_the_real_engine():
+    for mid, m in rulesctl.load_metadata().items():
+        if m["engine"] == "wazuh":
+            assert all(wl.lines_of(t) or "fim" in t for t in m["tests"]), mid
 
 
 def test_ci_engine_version_matches_the_version_deployed_by_terraform():

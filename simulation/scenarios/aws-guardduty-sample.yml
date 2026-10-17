@@ -1,8 +1,9 @@
 id: aws-guardduty-sample
 title: AWS technique - GuardDuty sample findings (cloud path)
 kind: guardduty_sample
-malicious: true
-techniques: [T1110.001, T1046]
+evaluation_scope: pipeline_only
+malicious: false
+techniques: []
 finding_types:
   - 'UnauthorizedAccess:EC2/SSHBruteForce'
   - 'Recon:EC2/PortProbeUnprotectedPort'

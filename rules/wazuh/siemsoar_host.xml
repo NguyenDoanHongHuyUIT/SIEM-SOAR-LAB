@@ -1,11 +1,22 @@
 <!--
   SIEMSOAR detection-as-code: host rules (ids 100100-100199).
+
+  Design rule: do not re-implement detections Wazuh already ships. A SIEMSOAR rule is either
+    * a policy rule on top of an official rule, i.e. <if_sid> of an official rule (5902, 5712, 5763, 550 ...): the
+      official decoder, regex and frequency/timeframe logic stay authoritative and this rule only decides that the
+      alert is worth a case (level, MITRE, lifecycle state, response). `tools.rulesctl lint` checks that every parent
+      exists in the pinned official ruleset (rules/reference/wazuh-<version>.json), or
+    * a lab-specific rule for something no official rule can know (the canary directory).
+
   Authoring rules:
     * every <rule id> needs rules/metadata/wazuh-<id>.yml (state, MITRE, expected FP, positive/negative tests)
     * do NOT add <group> siemsoar_<state> / resp_<x> tags here: `tools/rulesctl.py build` injects them from
       the metadata, which is how shadow/active/enforce/deprecated is controlled from Git.
+    * MITRE ids must exist and not be revoked in the pinned ATT&CK snapshot (lint).
 -->
 <group name="siemsoar,syscheck,">
+  <!-- Official 550 ("Integrity checksum changed", level 7) fires for every monitored file. These rules raise the few
+       files whose change means account/privilege tampering. Monitored paths: suricata/ossec_agent_additions.xml. -->
   <rule id="100100" level="12">
     <if_sid>550</if_sid>
     <field name="file">^/etc/passwd$</field>
@@ -15,6 +26,35 @@
     </mitre>
   </rule>
 
+  <rule id="100102" level="10">
+    <if_sid>550</if_sid>
+    <field name="file">^/etc/shadow$</field>
+    <description>SIEMSOAR: /etc/shadow was modified</description>
+    <mitre>
+      <id>T1078.003</id>
+      <id>T1136.001</id>
+    </mitre>
+  </rule>
+
+  <rule id="100103" level="10">
+    <if_sid>550</if_sid>
+    <field name="file">^/etc/sudoers$</field>
+    <description>SIEMSOAR: /etc/sudoers was modified</description>
+    <mitre>
+      <id>T1548.003</id>
+    </mitre>
+  </rule>
+
+  <rule id="100104" level="10">
+    <if_sid>550,554</if_sid>
+    <field name="file">/.ssh/authorized_keys$</field>
+    <description>SIEMSOAR: SSH authorized_keys created or modified</description>
+    <mitre>
+      <id>T1098.004</id>
+    </mitre>
+  </rule>
+
+  <!-- Lab-specific: a deception (canary) directory no official rule knows about. -->
   <rule id="100101" level="7">
     <if_sid>550,554</if_sid>
     <field name="file">^/srv/lab/</field>
@@ -26,6 +66,7 @@
 </group>
 
 <group name="siemsoar,adduser,">
+  <!-- Official 5902 matches syslog "new user" / "new account added" (useradd, adduser). -->
   <rule id="100110" level="10">
     <if_sid>5902</if_sid>
     <description>SIEMSOAR: new local user account created</description>
@@ -36,23 +77,23 @@
 </group>
 
 <group name="siemsoar,authentication_failures,sshd,">
-  <rule id="100120" level="10" frequency="6" timeframe="120">
-    <if_matched_sid>5760</if_matched_sid>
-    <same_source_ip />
-    <description>SIEMSOAR: SSH authentication failure burst from one source</description>
+  <!-- Official brute-force detections (8 events in 120 s from one source, ignore=60 s):
+         5763 = failed password for an existing user (built on 5760)
+         5712 = attempts with a non-existent user (built on 5710)
+       These wrap them instead of duplicating the counting logic with our own numbers. -->
+  <rule id="100120" level="10">
+    <if_sid>5763</if_sid>
+    <description>SIEMSOAR: SSH brute force against an existing account</description>
     <mitre>
-      <id>T1110.001</id>
+      <id>T1110</id>
     </mitre>
   </rule>
-</group>
 
-<group name="siemsoar,simulation,">
-  <rule id="100130" level="8">
-    <program_name>^siemsoar-sim$</program_name>
-    <match>technique=</match>
-    <description>SIEMSOAR: simulated adversary technique marker</description>
+  <rule id="100121" level="10">
+    <if_sid>5712</if_sid>
+    <description>SIEMSOAR: SSH brute force with non-existent accounts</description>
     <mitre>
-      <id>T1059.004</id>
+      <id>T1110</id>
     </mitre>
   </rule>
 </group>

@@ -48,11 +48,15 @@ python -m tools.soarctl lab status | extend --hours 2 | down
 Kết thúc: `lab-session → down` (hủy hẳn) — hoặc timer chỉ *stop* instance nếu bạn quên.
 
 ## 5. Chạy lần đầu an toàn (checklist)
-1. `dry_run=true` (mặc định). Chạy `python -m simulation.runner run host-marker` → case xuất hiện, Slack gửi thẻ, bấm **Approve** (nếu plan là `none` thì **Acknowledge**).
+1. `dry_run=true` (mặc định). Chạy `python -m simulation.runner run host-useradd` (Atomic Red Team T1136.001 nguyên bản) → Wazuh rule 100110 bắn, case xuất hiện, Slack gửi thẻ, bấm **Approve** (nếu plan là `none` thì **Acknowledge**).
 2. `python -m simulation.runner run aws-guardduty-sample` → case từ GuardDuty (tài nguyên mẫu không tồn tại → chỉ cần Acknowledge).
 3. `python -m simulation.runner run host-useradd` với `dry_run=true` → xem workflow đi hết, SG **chưa** đổi.
 4. Đặt `DRY_RUN=false` (GitHub variable) → apply → lặp lại: SG cô lập thật, snapshot thật, restore xác minh thật.
 5. `python -m simulation.runner run-all` (robustness cần `ENABLE_FAULT_INJECTION=true` ở lần apply đó, rồi tắt lại).
+
+Trước khi chạy `aws-stratus-cloudtrail-stop`, đặt `SIEMSOAR_LAB_ACCOUNT_ID` thành account ID lab đã được duyệt và xác nhận AWS credentials hiện tại trỏ đúng account (cần binary `stratus`). Runner từ chối account không khớp. Trình tự: `stratus warmup` bằng credential của người vận hành (Stratus tự tạo trail `stratus-red-team-*`), runner xóa key cũ và tạo access key mới cho IAM user vùng simulation (`SIEMSOAR_SIM_USER`, mặc định `lab-victim`, chỉ được `cloudtrail:StopLogging` trên trail của Stratus), `stratus detonate` bằng key đó, rồi `stratus cleanup` bằng credential người vận hành. GuardDuty sinh `Stealth:IAMUser/CloudTrailLoggingDisabled` trỏ tới key của `lab-victim` → case với plan `iam_key_disable`.
+
+Pcap cho test Suricata được bắt lại bằng `python -m tools.capture_pcaps` (cần Docker; chạy thủ tục Atomic trong mạng Docker tạm, ghi `rules/pcaps/provenance.json`). Khi thêm rule ET Open: tạo metadata `source: et-open` + `wazuh_rule_id`, rồi `python -m tools.refdata et-open` để ghim nội dung rule.
 
 ## 6. Vận hành rule
 Xem [detection-as-code.md](detection-as-code.md). Nhanh: sửa/thêm rule → PR (CI) → merge → **rules-deploy** → shadow →

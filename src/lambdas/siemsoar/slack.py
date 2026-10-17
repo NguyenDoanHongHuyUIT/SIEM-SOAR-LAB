@@ -5,14 +5,13 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 
-from .util import get_logger
-
-log = get_logger("slack")
+log = logging.getLogger("slack")
 SIG_TOLERANCE = 300
 
 SEV_EMOJI = {"critical": ":rotating_light:", "high": ":red_circle:", "medium": ":large_orange_circle:",

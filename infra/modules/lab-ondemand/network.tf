@@ -79,3 +79,33 @@ resource "aws_vpc_security_group_egress_rule" "sensor_all" {
   ip_protocol       = "-1"
   description       = "package repos, AWS APIs, simulated traffic"
 }
+
+# ---- Containment SG used by the SOAR (found by name: siemsoar.response.ISOLATION_SG_NAME). No inbound; outbound only to
+# the Wazuh manager's event port, so an isolated host stays visible to the SIEM while it is contained (what is it doing
+# now? is the attacker still active?). Without this rule the agent would go silent exactly when telemetry matters most.
+# SSM and package repos stay unreachable while isolated. The Lambda only creates a zero-egress fallback in VPCs that
+# have no such group.
+resource "aws_security_group" "isolation" {
+  name        = "siemsoar-isolation"
+  description = "SIEM-SOAR containment: no ingress, egress only to the Wazuh manager (1514/tcp)"
+  vpc_id      = aws_vpc.lab.id
+  tags        = { ManagedBy = "siemsoar" }
+}
+
+resource "aws_vpc_security_group_egress_rule" "isolation_to_manager" {
+  security_group_id            = aws_security_group.isolation.id
+  referenced_security_group_id = aws_security_group.manager.id
+  from_port                    = 1514
+  to_port                      = 1514
+  ip_protocol                  = "tcp"
+  description                  = "Wazuh agent events from a contained host"
+}
+
+resource "aws_vpc_security_group_ingress_rule" "agent_events_isolated" {
+  security_group_id            = aws_security_group.manager.id
+  referenced_security_group_id = aws_security_group.isolation.id
+  from_port                    = 1514
+  to_port                      = 1514
+  ip_protocol                  = "tcp"
+  description                  = "Wazuh agent events from a contained host"
+}

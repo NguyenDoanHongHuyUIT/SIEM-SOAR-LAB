@@ -9,7 +9,9 @@ log() { echo "[bootstrap_manager] $*"; }
 if [ ! -x /var/ossec/bin/wazuh-control ]; then
   log "installing Wazuh ${WAZUH_VERSION} all-in-one (takes ~10 min)"
   cd /tmp
-  curl -fsSLO "https://packages.wazuh.com/${WAZUH_VERSION}/wazuh-install.sh"
+  # the installer is published per minor line (4.14), not per patch release; it installs the newest 4.14.x, and the
+  # agent (pinned to ${WAZUH_VERSION}) is never newer than that
+  curl -fsSLO "https://packages.wazuh.com/${WAZUH_VERSION%.*}/wazuh-install.sh"
   bash wazuh-install.sh -a -i
   # Keep generated credentials out of logs: push the admin password to SSM SecureString, then shred.
   tar -O -xf wazuh-install-files.tar wazuh-install-files/wazuh-passwords.txt > /tmp/wazuh-passwords.txt

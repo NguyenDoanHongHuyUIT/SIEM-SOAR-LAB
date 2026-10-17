@@ -15,22 +15,20 @@ class EvidenceExists(Exception):
     pass
 
 
-def put_json(case_id: str, name: str, obj: dict, overwrite: bool = False) -> dict:
-    """Write evidence/<case>/<name>.json. Refuses to overwrite so the first capture is the truth."""
+def put_json(case_id: str, name: str, obj: dict) -> dict:
+    """Write cases/<case>/<name>.json exactly once: S3 conditional write (If-None-Match) makes the first capture win
+    atomically, with no check-then-write race. Raises EvidenceExists when the object is already there."""
     bucket = settings().evidence_bucket
     key = f"cases/{case_id}/{name}.json"
-    s3 = aws.client("s3")
-    if not overwrite:
-        try:
-            s3.head_object(Bucket=bucket, Key=key)
-            raise EvidenceExists(key)
-        except ClientError as err:
-            if err.response["Error"]["Code"] not in {"404", "NoSuchKey", "NotFound"}:
-                raise
     body = json.dumps(obj, indent=2, sort_keys=True, default=str).encode()
     digest = hashlib.sha256(body).hexdigest()
-    s3.put_object(Bucket=bucket, Key=key, Body=body, ContentType="application/json",
-                  Metadata={"sha256": digest, "case-id": case_id})
+    try:
+        aws.client("s3").put_object(Bucket=bucket, Key=key, Body=body, ContentType="application/json",
+                                    Metadata={"sha256": digest, "case-id": case_id}, IfNoneMatch="*")
+    except ClientError as err:
+        if err.response["Error"]["Code"] in {"PreconditionFailed", "ConditionalRequestConflict"}:
+            raise EvidenceExists(key) from err
+        raise
     return {"bucket": bucket, "key": key, "sha256": digest}
 
 

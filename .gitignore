@@ -23,3 +23,5 @@ dist/
 # stray build artifacts (never commit wheels/tarballs: pin them in requirements-dev.txt instead)
 *.whl
 *.tar.gz
+*.patch
+*.orig

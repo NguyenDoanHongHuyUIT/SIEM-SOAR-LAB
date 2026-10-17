@@ -99,9 +99,25 @@ resource "aws_iam_instance_profile" "host" {
   role = aws_iam_role.host.name
 }
 
-# ---- Victim IAM user for the "AWS technique" scenario. Keys are created/destroyed by the simulation run.
+# ---- Victim IAM user (simulation zone) for the "AWS technique" scenario. The runner creates its access key per run and
+# detonates Stratus Red Team aws.defense-evasion.cloudtrail-stop with it, so the GuardDuty finding names this user's key
+# (iam_key_disable path). It may only stop the trails Stratus creates for itself, never the lab's own trail.
 resource "aws_iam_user" "victim" {
   name          = "${var.iam_target_prefix}victim"
   force_destroy = true
-  tags          = { owner = "lab", criticality = "low", "siemsoar:plane" = "ondemand" }
+  tags          = { owner = "lab", criticality = "low", "siemsoar:plane" = "ondemand", "siemsoar:zone" = "simulation" }
+}
+
+data "aws_iam_policy_document" "victim" {
+  statement {
+    sid       = "StratusCloudTrailStop"
+    actions   = ["cloudtrail:StopLogging", "cloudtrail:GetTrailStatus"]
+    resources = ["arn:aws:cloudtrail:${local.region}:${local.account_id}:trail/stratus-red-team-*"]
+  }
+}
+
+resource "aws_iam_user_policy" "victim" {
+  name   = "stratus-detonation"
+  user   = aws_iam_user.victim.name
+  policy = data.aws_iam_policy_document.victim.json
 }

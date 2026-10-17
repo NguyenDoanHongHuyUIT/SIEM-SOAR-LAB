@@ -1,0 +1,15 @@
+id: host-ssh-credstuffing
+title: Credential access - SSH credential stuffing against the host (Atomic Red Team T1110.004 test 1)
+kind: atomic
+target: sensor
+malicious: true
+atomic:
+  technique: T1110.004
+  test_guid: 4f08197a-2a8a-472d-9589-cd2895ef22ad   # sshpass + the atomic's own list (src/credstuffuserpass.txt)
+  args: {target_host: localhost}
+  ref: 388942adbd9641f4dfdcf079d7efe9a75ec0ac43
+  timeout: 900
+expect:
+  # the list's accounts do not exist on the host: sshd logs "Invalid user", official 5710 -> 5712 (8 in 120 s)
+  - {source: wazuh, rule_id: "100121", case: false}
+settle_seconds: 180

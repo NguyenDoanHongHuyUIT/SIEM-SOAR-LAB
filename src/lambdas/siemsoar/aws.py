@@ -12,7 +12,7 @@ _CFG = Config(retries={"max_attempts": 5, "mode": "standard"}, connect_timeout=3
 
 
 def region() -> str:
-    return os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "ap-southeast-1"
+    return os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
 
 
 @cache

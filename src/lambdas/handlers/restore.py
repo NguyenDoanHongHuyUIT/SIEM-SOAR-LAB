@@ -43,8 +43,8 @@ def _validate(case, event, store):
     if pre and plan["type"] == PLAN_EC2:
         cur = response.describe_instance(plan["params"]["instance_id"])
         iso_sg = (case.get("isolation") or {}).get("isolation_sg")
-        if not dry_run_of(event) and cur["security_groups"] != [iso_sg]:
-            reasons.append(f"drift: current security groups {cur['security_groups']} != isolation SG [{iso_sg}]")
+        if not dry_run_of(event) and not response.is_isolated(cur, iso_sg):
+            reasons.append(f"drift: current security groups {response.eni_groups(cur)} != isolation SG [{iso_sg}]")
         iac = pre.get("iac_security_groups")
         if iac and iac != pre["security_groups"]:
             reasons.append(f"drift: saved SGs {pre['security_groups']} differ from IaC desired {iac}")
@@ -70,7 +70,8 @@ def _execute(case, event, store):
     out: dict = {"verdict": verdict}
     if plan["type"] == PLAN_EC2:
         iid = plan["params"]["instance_id"]
-        out["security_groups"] = response.restore_instance_sgs(iid, pre["security_groups"], dry)
+        per_eni = {n["id"]: n["groups"] for n in pre.get("network_interfaces", [])}
+        out["security_groups"] = response.restore_instance_sgs(iid, pre["security_groups"], dry, per_eni)
         if pre.get("role_name"):
             out["sessions"] = response.restore_role_sessions(pre["role_name"], dry)
         if case.get("instance_stopped") and pre.get("state") == "running":
@@ -91,9 +92,10 @@ def _verify(case, event, store):
     pre, _ = evidence.get_json(cid, "pre_action_state")
     if plan["type"] == PLAN_EC2:
         cur = response.describe_instance(plan["params"]["instance_id"])
-        ok = dry or (cur["security_groups"] == pre["security_groups"]
-                     and not (pre.get("role_name") and response.has_revoke_policy(pre["role_name"])))
-        summary = f"security groups {cur['security_groups']} (expected {pre['security_groups']})"
+        expected = {n["id"]: n["groups"] for n in pre.get("network_interfaces", [])}
+        groups_ok = (response.eni_groups(cur) == expected) if expected else cur["security_groups"] == pre["security_groups"]
+        ok = dry or (groups_ok and not (pre.get("role_name") and response.has_revoke_policy(pre["role_name"])))
+        summary = f"security groups {expected or cur['security_groups']} restored (now {response.eni_groups(cur)})"
     else:
         keys = response.list_keys(pre["user_name"])
         want_fp = _verdict(event) == "false_positive"

@@ -36,10 +36,47 @@ def _enrich_iam(case: dict, plan: dict) -> tuple[dict, dict, bool, str]:
              "key_status": keys.get(plan["params"]["access_key_id"], "missing")}, plan, True, "")
 
 
+LOOKUP_STATES = ("pending", "running", "stopping", "stopped")
+
+
+def resolve_agent(plan: dict) -> tuple[str | None, str]:
+    """Map a Wazuh agent that is not named after an instance id to exactly one EC2 instance.
+
+    Strategies and their order come from policy `resolution.wazuh_agent`. A strategy that matches several instances
+    (overlapping private ranges, reused names) is an ambiguity, not a guess: the plan stays `none`.
+    Returns (instance id or None, how it was resolved / why not).
+    """
+    info = plan.get("unresolved") or {}
+    reasons = []
+    for how in plan.get("resolve_via", []):
+        if how == "private_ip" and info.get("agent_ip"):
+            filters = [{"Name": "private-ip-address", "Values": [str(info["agent_ip"])]}]
+        elif how == "name_tag" and info.get("agent_name"):
+            filters = [{"Name": "tag:Name", "Values": [str(info["agent_name"])]}]
+        else:
+            continue
+        hits = response.find_instances_where(filters, LOOKUP_STATES)
+        if len(hits) == 1:
+            return hits[0]["id"], how
+        reasons.append(f"{how}: {len(hits)} instances matched")
+    return None, "agent could not be mapped to one EC2 instance (" + ("; ".join(reasons) or "no usable identifier") + ")"
+
+
 def handler(event, context=None):
     store, case = load(event)
     plan = case.get("response_plan", {"type": PLAN_NONE, "params": {}})
-    enrichment, note, exists = {}, "", True
+    resolution_note = ""
+    if plan["type"] == PLAN_NONE and plan.get("requested") == PLAN_EC2 and plan.get("unresolved"):
+        instance_id, how = resolve_agent(plan)
+        if instance_id:
+            plan = {"type": PLAN_EC2, "params": {"instance_id": instance_id}, "resolved_via": how}
+            old = case.get("resource", {})
+            store.update_case(case["case_id"], resource={**old, "type": "ec2_instance", "id": instance_id,
+                                                         "agent_name": old.get("id")}, resource_id=instance_id)
+            store.audit(case["case_id"], "agent_resolved", "system", {"instance_id": instance_id, "via": how})
+        else:
+            resolution_note = how
+    enrichment, note, exists = {}, resolution_note, True
     if plan["type"] == PLAN_EC2:
         enrichment, plan, exists, note = _enrich_ec2(case, plan)
     elif plan["type"] == PLAN_IAM:

@@ -35,11 +35,15 @@ def apply_decision(store: CaseStore, case_id: str, gate: str, decision: str, act
             raise DecisionRejected("no response plan for this case; use acknowledge")
         if decision == "acknowledge" and plan != "none":
             raise DecisionRejected("this case has a response plan; use approve or dismiss")
+        target = APPROVAL_DECISIONS[decision]
         try:  # conditional on NOTIFIED: the first click wins, later clicks fail here
-            store.transition(case_id, APPROVAL_DECISIONS[decision], actor=actor,
-                             detail={"channel": channel, "decision": decision}, approver=actor)
+            store.transition(case_id, target, actor=actor, detail={"channel": channel, "decision": decision},
+                             approver=actor)
         except InvalidTransition as err:
-            raise DecisionRejected(f"already handled (status {err.current})") from err
+            # Same decision, token still open: an earlier attempt moved the case but could not reach Step Functions
+            # (token was released). Resume it; the single-use token below still lets exactly one delivery through.
+            if err.current != target:
+                raise DecisionRejected(f"already handled (status {err.current})") from err
     elif gate == "restore":
         if decision not in RESTORE_DECISIONS:
             raise DecisionRejected(f"unknown decision {decision!r}")

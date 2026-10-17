@@ -12,7 +12,7 @@ def test_guardduty_instance_maps_to_ec2_plan():
     assert a["response_plan"] == {"type": "ec2_isolate", "params": {"instance_id": "i-0abc1234def567890"}}
     assert a["severity"] == pytest.approx(89.9, abs=0.1)
     assert a["severity_label"] == "critical"
-    assert a["mitre"] == ["T1110.001"]
+    assert a["mitre"] == ["T1110"]
     assert a["event_time"] == "2026-10-06T09:59:00.000Z"
 
 
@@ -53,7 +53,7 @@ def test_wazuh_plan_requires_instance_id_agent_name():
 def test_suricata_alert_detected_via_group_and_no_response_plan():
     a = schema.normalize_event(ev.SURICATA)
     assert a["source"] == "suricata"
-    assert a["title"] == "SIEMSOAR-LAB path traversal"
+    assert a["title"] == "ET MALWARE Sality - Fake Opera User-Agent"
     assert a["response_plan"]["type"] == "none"
 
 
@@ -70,6 +70,25 @@ def test_unsupported_events_rejected():
         schema.normalize_event({"source": "aws.ec2", "detail": {}})
     with pytest.raises(schema.UnsupportedEvent):
         schema.normalize_event({"source": "aws.guardduty"})
+
+
+def test_invalid_event_time_and_severity_are_rejected():
+    bad_time = ev.clone(ev.guardduty_instance())
+    bad_time["detail"]["createdAt"] = "not-a-timestamp"
+    bad_time["detail"]["service"].pop("eventFirstSeen")
+    with pytest.raises(schema.InvalidEvent, match="event time"):
+        schema.normalize_event(bad_time)
+
+    for severity in (-1, 9, float("nan"), "unknown", True):
+        bad_severity = ev.clone(ev.guardduty_instance())
+        bad_severity["detail"]["severity"] = severity
+        with pytest.raises(schema.InvalidEvent, match="severity"):
+            schema.normalize_event(bad_severity)
+
+    bad_wazuh = ev.clone(ev.WAZUH_FIM)
+    bad_wazuh["detail"]["timestamp"] = "2026-10-06T10:00:00"
+    with pytest.raises(schema.InvalidEvent, match="timezone offset"):
+        schema.normalize_event(bad_wazuh)
 
 
 def test_risk_score_bounds_and_monotonic():

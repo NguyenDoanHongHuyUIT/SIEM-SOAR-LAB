@@ -18,7 +18,7 @@ from typing import Any
 from botocore.exceptions import ClientError
 
 from . import aws
-from .states import Status, is_terminal, sources_for
+from .states import Status, sources_for
 from .util import epoch, from_ddb, iso, to_ddb
 
 
@@ -167,6 +167,10 @@ class CaseStore:
                 return False
             raise
 
+    def forget_delivery(self, source_id: str) -> None:
+        """Undo first_delivery() when processing failed, so the EventBridge retry is not mistaken for a duplicate."""
+        self.table.delete_item(Key={"pk": f"ALERT#{source_id}", "sk": "SEEN"})
+
     def acquire_dedup(self, dedup_key: str, case_id: str, window: int) -> str | None:
         """Atomically claim the dedup window. Returns None if acquired, else the existing case id."""
         now = epoch()
@@ -231,16 +235,25 @@ class CaseStore:
         return bool(item) and not item.get("used")
 
     # ---- circuit breaker ----------------------------------------------------------
-    def breaker_register(self, case_id: str, limit: int, window: int) -> tuple[int, bool]:
-        """Register an isolation attempt. Idempotent per case; returns (count_in_window, tripped)."""
-        bucket = epoch() // window
+    def breaker_register(self, case_id: str, limit: int, window: int, now: int | None = None) -> tuple[int, bool]:
+        """Register an isolation attempt. Idempotent per case; returns (count, tripped).
+
+        Attempts are kept in fixed buckets of `window` seconds, and the count is taken over the current AND the previous
+        bucket. With the current bucket alone, a burst straddling a bucket boundary (two isolations at 09:59:59, two at
+        10:00:01) would never trip. Any `window`-long interval lies inside two consecutive buckets, so more than `limit`
+        isolations within `window` seconds always trip; the price is that attempts up to 2 x window apart may also
+        count together, which errs on the side of stopping automation.
+        """
+        bucket = (epoch() if now is None else now) // window
         res = self.table.update_item(
             Key={"pk": "BREAKER#isolation", "sk": f"BUCKET#{bucket}"},
             UpdateExpression="ADD cases :c SET #t = :ttl",
             ExpressionAttributeNames={"#t": "ttl"},
-            ExpressionAttributeValues={":c": {case_id}, ":ttl": (bucket + 2) * window},
+            ExpressionAttributeValues={":c": {case_id}, ":ttl": (bucket + 3) * window},
             ReturnValues="ALL_NEW")
-        count = len(res["Attributes"]["cases"])
+        previous = self.table.get_item(Key={"pk": "BREAKER#isolation", "sk": f"BUCKET#{bucket - 1}"},
+                                       ConsistentRead=True).get("Item", {})
+        count = len(set(res["Attributes"]["cases"]) | set(previous.get("cases", set())))
         return count, count > limit
 
     # ---- simulation runs ------------------------------------------------------------
@@ -250,6 +263,3 @@ class CaseStore:
     def list_runs(self) -> list[dict]:
         return from_ddb(self._paginate("scan", FilterExpression="begins_with(pk, :p) AND sk = :m",
                                        ExpressionAttributeValues={":p": "RUN#", ":m": "META"}))
-
-    def is_terminal_case(self, case_id: str) -> bool:
-        return is_terminal(self.get_case(case_id)["status"])

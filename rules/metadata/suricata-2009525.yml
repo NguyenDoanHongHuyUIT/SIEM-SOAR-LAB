@@ -1,0 +1,32 @@
+id: suricata-2009525
+engine: suricata
+source: et-open
+rule_id: 2009525
+wazuh_rule_id: 110102
+level: 10
+name: Malware user agent (ET MALWARE Sality - Fake Opera User-Agent)
+state: shadow
+response: none
+mitre: [T1071.001]       # evidence: Atomic Red Team T1071.001 test 3 (rules/pcaps/provenance.json, scenario net-malicious-ua)
+references:
+  - https://attack.mitre.org/techniques/T1071/001/
+  - https://github.com/redcanaryco/atomic-red-team/blob/388942adbd9641f4dfdcf079d7efe9a75ec0ac43/atomics/T1071.001/T1071.001.md
+  - https://rules.emergingthreats.net/open/suricata-7.0.3/rules/emerging-malware.rules
+tactic: Command and Control
+owner: nguyen-doan-hong-huy
+created: 2026-10-15
+data_source: Suricata EVE JSON via Wazuh agent
+description: >
+  HTTP request whose User-Agent is the fake Opera string used by the Sality malware family. Atomic Red Team's
+  "Malicious User Agents - Nix" test sends it, so the detection is exercised by a public procedure, not by our own traffic.
+expected_fp: Very old Opera 8.x browsers (released 2005-2006).
+tests:
+  - name: user agents of the Atomic Red Team procedure
+    expect: match
+    pcap: t1071_001_malicious_user_agents.pcap
+  - name: ordinary HTTP clients
+    expect: no_match
+    pcap: benign_http_clients.pcap
+  - name: port scan only
+    expect: no_match
+    pcap: t1046_nmap_syn_scan.pcap

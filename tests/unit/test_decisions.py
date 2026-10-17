@@ -70,3 +70,18 @@ def test_expired_workflow_does_not_leave_case_approved(store, sfn):
     with pytest.raises(DecisionRejected):
         apply_decision(store, cid, "approval", "approve", "slack:U1")
     assert store.get_case(cid)["status"] == "EXPIRED"
+
+
+def test_transient_step_functions_failure_can_be_retried(store, sfn):
+    """send_task_success fails after the case moved to APPROVED: the click must be retryable, not strand the case."""
+    cid = _notified_case(store)
+    sfn.fail_success = 1
+    with pytest.raises(DecisionRejected):
+        apply_decision(store, cid, "approval", "approve", "slack:U1")
+    assert store.get_case(cid)["status"] == "APPROVED" and store.has_open_token(cid, "approval")
+    apply_decision(store, cid, "approval", "approve", "slack:U1")
+    assert len(sfn.success) == 1 and not store.has_open_token(cid, "approval")
+    with pytest.raises(DecisionRejected):  # still single use
+        apply_decision(store, cid, "approval", "approve", "slack:U1")
+    with pytest.raises(DecisionRejected):  # and a different decision never overrides it
+        apply_decision(store, cid, "approval", "dismiss", "slack:U1")

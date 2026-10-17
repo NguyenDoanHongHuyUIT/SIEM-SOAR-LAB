@@ -3,6 +3,7 @@ import os
 
 import boto3
 import pytest
+from botocore.exceptions import ClientError
 from moto import mock_aws
 
 os.environ.update({
@@ -20,10 +21,8 @@ def _table(ddb):
         TableName="siemsoar-cases", BillingMode="PAY_PER_REQUEST",
         KeySchema=[{"AttributeName": "pk", "KeyType": "HASH"}, {"AttributeName": "sk", "KeyType": "RANGE"}],
         AttributeDefinitions=[{"AttributeName": a, "AttributeType": "S"} for a in
-                              ("pk", "sk", "dedup_key", "resource_id", "created_at", "status")],
+                              ("pk", "sk", "resource_id", "created_at", "status")],
         GlobalSecondaryIndexes=[
-            {"IndexName": "dedup-index", "KeySchema": [{"AttributeName": "dedup_key", "KeyType": "HASH"}],
-             "Projection": {"ProjectionType": "ALL"}},
             {"IndexName": "resource-index", "KeySchema": [{"AttributeName": "resource_id", "KeyType": "HASH"},
                                                           {"AttributeName": "created_at", "KeyType": "RANGE"}],
              "Projection": {"ProjectionType": "ALL"}},
@@ -63,6 +62,7 @@ class FakeSfn:
     def __init__(self):
         self.started, self.success = [], []
         self.fail_start = False
+        self.fail_success = 0  # number of send_task_success calls to fail transiently
 
     def start_execution(self, **kw):
         if self.fail_start:
@@ -71,6 +71,9 @@ class FakeSfn:
         return {"executionArn": f"arn:exec:{kw['name']}"}
 
     def send_task_success(self, taskToken, output):
+        if self.fail_success:
+            self.fail_success -= 1
+            raise ClientError({"Error": {"Code": "ThrottlingException", "Message": "slow down"}}, "SendTaskSuccess")
         self.success.append((taskToken, json.loads(output)))
 
 

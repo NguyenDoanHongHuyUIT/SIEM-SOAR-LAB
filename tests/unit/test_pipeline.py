@@ -48,10 +48,18 @@ def test_start_failure_releases_lock_and_marks_failed(store, sfn):
     with pytest.raises(RuntimeError):
         pipeline.ingest(alert)
     sfn.fail_start = False
-    retry = pipeline.ingest(schema.normalize_event(ev.guardduty_instance(fid="f10")))
-    assert retry["action"] == "created"  # lock was released, no lost alert
-    failed = store.list_cases("FAILED")
-    assert len(failed) == 1
+    # EventBridge retries the SAME finding: it must open a case, not be swallowed as a duplicate delivery
+    retry = pipeline.ingest(alert)
+    assert retry["action"] == "created"
+    assert len(store.list_cases("FAILED")) == 1
+
+
+def test_orphaned_dedup_lock_does_not_block_new_alerts(store, sfn):
+    """A crash between acquire_dedup and create_case leaves a lock pointing at a case that does not exist."""
+    alert = schema.normalize_event(ev.guardduty_instance(fid="f1"))
+    store.acquire_dedup(alert["dedup_key"], "C-never-created", 3600)
+    out = pipeline.ingest(alert)
+    assert out["action"] == "created" and out["case_id"] != "C-never-created"
 
 
 def test_unsupported_event_ignored(sfn):

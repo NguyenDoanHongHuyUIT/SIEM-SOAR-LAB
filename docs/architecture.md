@@ -82,10 +82,9 @@ hai kênh quyết định (Slack + CLI) đồng thời chỉ có một kết qu�
 | `DEDUP#<key>` | `LOCK` | khóa cửa sổ dedup → `case_id` |
 | `ALERT#<id>` | `SEEN` | idempotency cho EventBridge at-least-once |
 | `BREAKER#isolation` | `BUCKET#<n>` | tập case_id trong cửa sổ (đếm idempotent) |
-| `FEEDBACK#<rule>` | `<ts>#<case>` | phản hồi FP để tuning rule |
 | `RUN#<id>` | `META` | lượt mô phỏng + ground truth + kết quả |
 
-GSI: `dedup-index`, `resource-index (resource_id, created_at)`, `status-index (status, created_at)`.
+GSI: `resource-index (resource_id, created_at)`, `status-index (status, created_at)`.
 
 ## 5. Mô hình bảo mật
 
@@ -96,6 +95,9 @@ GSI: `dedup-index`, `resource-index (resource_id, created_at)`, `status-index (s
 * **Secret**: SSM SecureString (đặt ngoài Terraform), key xoay vòng ghi vào Secrets Manager, không bao giờ vào state/log/DynamoDB (có test).
 * **Evidence**: S3 Versioning + Object Lock (GOVERNANCE) + SSE + TLS-only; ghi một lần, hash trong case, kiểm lại hash trước restore.
 * **Log Step Functions** không chứa payload (`include_execution_data=false`).
+
+## 5b. Chính sách là dữ liệu
+`src/lambdas/siemsoar/policy.toml` (đóng gói cùng Lambda, nạp và **kiểm tra** lúc khởi động bằng `tomllib`) chứa mọi phán đoán có thể thay đổi: thang severity của GuardDuty/Wazuh, finding nào được kèm response nào (theo `resourceType`/`userType`), ánh xạ ATT&CK (lấy từ MITRE CTID qua `guardduty_attack.json`, ghi đè cục bộ phải có `basis` + `reason`), trường ngữ cảnh lấy từ alert gốc (đường dẫn có thứ tự: `data.src_ip` rồi `data.srcip` …), khóa dedup, thứ tự phân giải agent→instance (`instance_id`, `private_ip`, `name_tag`; chỉ nhận khi **đúng một** kết quả) và trọng số rủi ro. Đổi nguồn dữ liệu hay chính sách = sửa file này, không sửa code; test kiểm file hợp lệ và mọi ID ATT&CK còn hiệu lực.
 
 ## 6. Nguyên tắc thiết kế → hiện thực
 

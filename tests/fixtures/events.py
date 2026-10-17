@@ -34,11 +34,11 @@ WAZUH_FIM = {"source": "siemsoar.wazuh", "detail-type": "Wazuh Alert", "detail":
 
 SURICATA = {"source": "siemsoar.wazuh", "detail-type": "Wazuh Alert", "detail": {
     "id": "1759744900.456", "timestamp": "2026-10-06T10:05:00.000+0000",
-    "rule": {"id": "110001", "level": 10, "description": "Suricata: SIEMSOAR-LAB suspicious path traversal",
-             "groups": ["suricata", "siemsoar_active", "resp_none"], "mitre": {"id": ["T1190"]}},
+    "rule": {"id": "110102", "level": 10, "description": "Suricata: ET MALWARE Sality - Fake Opera User-Agent",
+             "groups": ["suricata", "siemsoar_active", "resp_none"], "mitre": {"id": ["T1071.001"]}},
     "agent": {"id": "001", "name": "i-0abc1234def567890"},
     "data": {"src_ip": "10.0.1.99", "event_type": "alert",
-             "alert": {"signature_id": 9000001, "signature": "SIEMSOAR-LAB path traversal"}}}}
+             "alert": {"signature_id": 2009525, "signature": "ET MALWARE Sality - Fake Opera User-Agent"}}}}
 
 
 def clone(event):

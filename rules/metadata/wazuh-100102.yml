@@ -1,0 +1,32 @@
+id: wazuh-100102
+engine: wazuh
+rule_id: 100102
+name: Shadow password file modified
+state: shadow
+response: none
+mitre: [T1078.003, T1136.001]   # evidence: atomics T1078.003 #9 and T1136.001 #1/#6 change /etc/shadow
+wraps: [550]
+references:
+  - https://attack.mitre.org/techniques/T1078/003/
+  - https://attack.mitre.org/techniques/T1136/001/
+  - https://github.com/redcanaryco/atomic-red-team/blob/388942adbd9641f4dfdcf079d7efe9a75ec0ac43/atomics/T1078.003/T1078.003.md
+  - https://github.com/wazuh/wazuh/blob/v4.14.8/ruleset/rules/0015-ossec_rules.xml
+  - https://documentation.wazuh.com/current/user-manual/capabilities/file-integrity/index.html
+tactic: Persistence
+owner: nguyen-doan-hong-huy
+created: 2026-10-14
+data_source: Wazuh syscheck (FIM) on /etc/shadow
+description: >
+  /etc/shadow changed (password hashes or account aging). Legitimate through passwd/chpasswd/usermod, so it starts in
+  shadow until the false-positive rate on the lab host is measured.
+expected_fp: Password changes by an administrator, package post-install scripts.
+tests:
+  - name: shadow content changed
+    expect: match
+    fim: {path: /etc/shadow}
+  - name: shadow backup is not the file
+    expect: no_match
+    fim: {path: /etc/shadow-}
+  - name: other file changed
+    expect: no_match
+    fim: {path: /etc/hosts}

@@ -21,7 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src" / "lambdas"))
 
 from botocore.exceptions import WaiterError  # noqa: E402
-from siemsoar import aws  # noqa: E402
+from siemsoar import aws, response  # noqa: E402
 
 TARGETS = {"manager": "wazuh-manager", "sensor": "suricata-sensor"}
 
@@ -59,10 +59,7 @@ def get_current(bucket: str) -> str | None:
 
 
 def running_instances(role: str) -> list[str]:
-    res = aws.client("ec2").describe_instances(Filters=[
-        {"Name": "tag:siemsoar:role", "Values": [role]}, {"Name": "tag:siemsoar:plane", "Values": ["ondemand"]},
-        {"Name": "instance-state-name", "Values": ["running"]}])
-    return [i["InstanceId"] for r in res["Reservations"] for i in r["Instances"]]
+    return [i["id"] for i in response.find_instances({"siemsoar:role": role, "siemsoar:plane": "ondemand"})]
 
 
 def deploy_target(prefix: str, target: str, sha: str, timeout: int = 900, poll: float = 5.0) -> dict:

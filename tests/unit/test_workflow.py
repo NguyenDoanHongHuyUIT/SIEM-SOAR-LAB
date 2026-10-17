@@ -79,7 +79,7 @@ def test_ec2_full_lifecycle_false_positive(store, sfn):
     assert outcome == "Succeed"
     assert visited[-1] == "DoneRestored"
     for s in ("Preflight", "SaveState", "SnapshotEvidence", "IsolateNetwork", "VerifyContainment", "ValidateRestore",
-              "ExecuteRestore", "VerifyRestore", "RecordFeedbackFP"):
+              "ExecuteRestore", "VerifyRestore"):
         assert s in visited, s
     case = store.get_case(cid)
     assert case["status"] == "RESTORED" and case["verdict"] == "false_positive"
@@ -91,10 +91,8 @@ def test_ec2_full_lifecycle_false_positive(store, sfn):
     assert state["security_groups"] == [lab.sg] and digest == case["pre_action_state_ref"]["sha256"]
     acts = audit_actions(store, cid)
     for a in ("case_created", "status:NOTIFIED", "status:APPROVED", "status:ISOLATING", "status:ISOLATED",
-              "status:RESTORING", "status:RESTORED", "preflight_ok", "fp_feedback_recorded"):
+              "status:RESTORING", "status:RESTORED", "preflight_ok"):
         assert a in acts, a
-    assert store.table.query(KeyConditionExpression="pk = :p", ExpressionAttributeValues={
-        ":p": f"FEEDBACK#{case['rule_id']}"})["Items"]
 
 
 def test_ec2_isolation_actually_cuts_network_and_revokes_sessions(store, sfn):
@@ -136,7 +134,7 @@ def test_high_risk_stops_instance_and_restore_starts_it(store, sfn):
     assert response.describe_instance(lab.iid)["state"] in {"pending", "running"}
 
 
-def test_dismiss_records_feedback_and_changes_nothing(store, sfn):
+def test_dismiss_changes_nothing(store, sfn):
     lab = Lab()
     cid = start(store, ev.guardduty_instance(lab.iid))
     outcome, _, visited = asl_runner.run(cid, CFG, gates("dismiss"))

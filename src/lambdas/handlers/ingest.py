@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import logging
+
 from siemsoar.pipeline import ingest
 from siemsoar.schema import UnsupportedEvent, normalize_event
-from siemsoar.util import get_logger
 
-log = get_logger("handlers.ingest")
+log = logging.getLogger("handlers.ingest")
 
 
 def handler(event, context=None):

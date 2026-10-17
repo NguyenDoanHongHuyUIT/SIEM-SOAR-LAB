@@ -10,9 +10,9 @@ lint:
 test:
 	pytest
 
-rules:            ## lint + tests of every detection rule
+rules:            ## lint + Suricata rule tests on the real engine
 	$(PY) -m tools.rulesctl lint
-	$(PY) -m tools.rulesctl test
+	$(PY) -m tools.suricata_pcap_test   # Wazuh rules: tools.wazuh_logtest against a manager container (CI job wazuh-engine)
 
 asl:              ## regenerate / check the Step Functions definition
 	$(PY) -m tools.gen_asl

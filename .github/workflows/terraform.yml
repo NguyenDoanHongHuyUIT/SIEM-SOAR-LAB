@@ -24,7 +24,8 @@ concurrency:
 
 env:
   TF_DIR: infra/envs/lab
-  AWS_REGION: ap-southeast-1
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  TF_VAR_region: ${{ vars.AWS_REGION || 'us-east-1' }}
   TF_VAR_alert_email: ${{ vars.ALERT_EMAIL }}
   TF_VAR_slack_channel: ${{ vars.SLACK_CHANNEL }}
   TF_VAR_dry_run: ${{ vars.DRY_RUN || 'true' }}
@@ -49,7 +50,7 @@ jobs:
           python-version: "3.12"
       - run: python -m tools.gen_asl --check
       - run: terraform fmt -check -recursive infra
-      - run: terraform -chdir=$TF_DIR init -input=false -backend-config="bucket=${{ vars.TFSTATE_BUCKET }}"
+      - run: terraform -chdir=$TF_DIR init -input=false -backend-config="bucket=${{ vars.TFSTATE_BUCKET }}" -backend-config="region=$AWS_REGION"
       - run: terraform -chdir=$TF_DIR validate
       - name: Plan (lab plane keeps its current on/off state)
         id: plan
@@ -80,10 +81,12 @@ jobs:
         with:
           terraform_version: "1.10.5"
           terraform_wrapper: false
-      - run: terraform -chdir=$TF_DIR init -input=false -backend-config="bucket=${{ vars.TFSTATE_BUCKET }}"
+      - run: terraform -chdir=$TF_DIR init -input=false -backend-config="bucket=${{ vars.TFSTATE_BUCKET }}" -backend-config="region=$AWS_REGION"
       - name: Apply
+        env:
+          LAB_INPUT: ${{ github.event.inputs.lab_enabled || 'keep' }}
         run: |
-          INPUT="${{ github.event.inputs.lab_enabled || 'keep' }}"
+          INPUT="$LAB_INPUT"
           if [ "$INPUT" = "keep" ]; then
             INPUT=$(terraform -chdir=$TF_DIR output -json lab 2>/dev/null | jq -r 'if . == null then "false" else "true" end' || echo false)
           fi

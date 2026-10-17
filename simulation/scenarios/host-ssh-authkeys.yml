@@ -1,0 +1,17 @@
+id: host-ssh-authkeys
+title: Persistence - rewrite root's SSH authorized_keys (Atomic Red Team T1098.004 test 1)
+kind: atomic
+target: sensor
+malicious: true
+atomic:
+  technique: T1098.004
+  test_guid: 342cc723-127c-4d3a-8292-9c0c6b4ecadc   # reads and rewrites ~/.ssh/authorized_keys (HOME=/root)
+  ref: 388942adbd9641f4dfdcf079d7efe9a75ec0ac43
+prepare:
+  - 'test -f /root/.ssh/authorized_keys'            # nothing to modify -> an execution error, never a false negative
+  - 'cp -p /root/.ssh/authorized_keys /var/tmp/authorized_keys.siemsoar.bak'
+cleanup:
+  - 'cp -p /var/tmp/authorized_keys.siemsoar.bak /root/.ssh/authorized_keys && rm -f /var/tmp/authorized_keys.siemsoar.bak'
+expect:
+  - {source: wazuh, rule_id: "100104", case: false}
+settle_seconds: 120

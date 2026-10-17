@@ -5,6 +5,10 @@ name: Canary directory changed
 state: shadow
 response: none
 mitre: [T1565.001]
+wraps: [550, 554]   # official Wazuh rules this rule hangs under (checked by lint)
+references:
+  - https://attack.mitre.org/techniques/T1565/001/
+  - https://documentation.wazuh.com/current/user-manual/capabilities/file-integrity/index.html
 tactic: Impact
 owner: nguyen-doan-hong-huy
 created: 2026-10-06
@@ -16,10 +20,10 @@ expected_fp: Anyone deliberately touching /srv/lab during a session.
 tests:
   - name: file added
     expect: match
-    event: {decoder: syscheck, parents: [554], fields: {file: /srv/lab/canary.txt}}
+    fim: {path: /srv/lab/canary.txt, type: added}
   - name: file modified
     expect: match
-    event: {decoder: syscheck, parents: [550], fields: {file: /srv/lab/notes/a.txt}}
+    fim: {path: /srv/lab/notes/a.txt}
   - name: outside canary dir
     expect: no_match
-    event: {decoder: syscheck, parents: [550], fields: {file: /srv/other/a.txt}}
+    fim: {path: /srv/other/a.txt}

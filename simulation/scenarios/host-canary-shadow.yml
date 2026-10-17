@@ -1,5 +1,5 @@
 id: host-canary-shadow
-title: Shadow rule must NOT create a case (lifecycle semantics)
+title: Shadow rule must NOT create a case (lifecycle semantics) - but the alert must exist in Wazuh
 kind: ssm_shell
 target: sensor
 malicious: false          # benign touch of the canary dir: any case here would be a lifecycle violation
@@ -8,5 +8,5 @@ commands:
   - 'echo "run_id={run_id}" >> /srv/lab/canary.txt'
 cleanup: []
 expect:
-  - {source: wazuh, rule_id: "100101", case: false}
+  - {source: wazuh, rule_id: "100101", case: false, false_positive: true}   # our own benign touch
 settle_seconds: 90

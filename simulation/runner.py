@@ -2,13 +2,21 @@
 
   python -m simulation.runner list
   python -m simulation.runner run host-useradd [--dry-run] [--no-wait]
-  python -m simulation.runner run-all [--kind ssm_shell --kind pcap_replay]
+  python -m simulation.runner run-all [--kind atomic --kind stratus] [--repeat 3]
   python -m simulation.runner upload-pcaps
 
-Every run gets a run_id, is written to DynamoDB (RUN#<id>) with its expectations, and is verified after a settle
-period against the cases the system produced. `evaluation/evaluate.py` later turns the stored runs into metrics.
-Host scenarios stamp `run_id=<id>` into syslog so Wazuh alerts (and thus cases) carry the label; cloud and network
-scenarios are joined to cases by time window and expected rule/finding type.
+What a scenario claims (technique, malicious or benign, which rule should fire) is validated by simulation/catalog.py
+against pinned public sources before anything runs. Every run gets a run_id and is stored in DynamoDB (RUN#<id>) with:
+
+  * `target`       the instance the procedure ran on (cases are joined to runs by target + time window, or by run_id
+                   when the procedure could stamp it into a log line),
+  * `siem_alerts`  every SIEMSOAR alert Wazuh raised on that target during the run window, whatever the rule's
+                   lifecycle state: this is how shadow rules, false positives of benign runs and missed detections are
+                   measured at the SIEM layer, independently of the case pipeline,
+  * `observed`     per expectation, whether its rule alerted in the window.
+
+After a benign run, cases opened on the target are closed with the simulation's ground truth (actor
+`sim:ground-truth`) so they do not block later restores; the evaluation never counts those as human feedback.
 """
 
 from __future__ import annotations
@@ -16,46 +24,62 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import secrets
+import shlex
 import subprocess
 import sys
-import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-import yaml
+from botocore.exceptions import WaiterError
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src" / "lambdas"))
 sys.path.insert(0, str(ROOT))
 
-SCENARIO_DIR = Path(__file__).resolve().parent / "scenarios"
+from siemsoar.util import parse_iso  # noqa: E402
 
+from simulation.catalog import SCENARIO_DIR, case_in_run, load_scenarios  # noqa: E402,F401  (re-exported)
 
-def load_scenarios(directory: Path = SCENARIO_DIR) -> dict[str, dict]:
-    out = {}
-    for p in sorted(directory.glob("*.yml")):
-        s = yaml.safe_load(p.read_text())
-        s["_file"] = p.name
-        out[s["id"]] = s
-    return out
+PCAP_DIR = ROOT / "rules" / "pcaps"
+GROUND_TRUTH_ACTOR = "sim:ground-truth"
+INSTANCE_RE = re.compile(r"^i-[0-9a-f]{8,17}$")
 
 
 def new_run_id(scenario_id: str) -> str:
     return f"run-{datetime.now(UTC):%Y%m%d%H%M}-{scenario_id}-{secrets.token_hex(2)}"[:64]
 
 
-def render(command: str, run_id: str) -> str:
-    return command.replace("{run_id}", run_id).replace("{short}", run_id.rsplit("-", 1)[-1])
+def render(command: str, run_id: str, context: dict[str, str] | None = None) -> str:
+    """Fill the catalogue's placeholders: {run_id}, {short} and host facts such as {manager_ip}."""
+    values = {"run_id": run_id, "short": run_id.rsplit("-", 1)[-1], **(context or {})}
+    return re.sub(r"\{(\w+)\}", lambda m: values.get(m.group(1), m.group(0)), command)
 
 
-def match_expectations(expect: list[dict], cases: list[dict]) -> list[dict]:
+def match_expectations(expect: list[dict], cases: list[dict], run_id: str,
+                       started_at: str, ended_at: str, settle_seconds: int) -> list[dict]:
     """Compare expectations with observed cases. A `case: false` expectation fails when a case exists."""
+    start, end = parse_iso(started_at), parse_iso(ended_at)
+    if start is None or end is None or settle_seconds < 0:
+        raise ValueError("scenario run has invalid time bounds")
+
     checks = []
     for e in expect:
-        hits = [c for c in cases if str(c["rule_id"]) == str(e["rule_id"]) and c["source"] == e["source"]]
+        hits = []
+        for case in cases:
+            if str(case["rule_id"]) != str(e["rule_id"]) or case["source"] != e["source"]:
+                continue
+            if case.get("run_id"):
+                belongs = case["run_id"] == run_id
+            else:
+                created = parse_iso(case.get("created_at"))
+                belongs = created is not None and start - timedelta(seconds=5) <= created <= end + timedelta(
+                    seconds=settle_seconds)
+            if belongs:
+                hits.append(case)
         want = e.get("case", True)
         ok = bool(hits) == want
         if not ok and e.get("optional"):
@@ -63,6 +87,47 @@ def match_expectations(expect: list[dict], cases: list[dict]) -> list[dict]:
         checks.append({"name": f"{e['source']}:{e['rule_id']} case={want}", "ok": ok,
                        "detail": [c["case_id"] for c in hits]})
     return checks
+
+
+def siem_alerts_command(agent: str) -> str:
+    """Shell snippet for the Wazuh manager: "<rule id> <timestamp>" of every SIEMSOAR alert of `agent`.
+
+    alerts.json is where Wazuh records an alert whatever the rule's lifecycle state is, so this sees shadow rules too.
+    The agent name (= EC2 instance id) is validated because it ends up inside a shell command.
+    """
+    if not INSTANCE_RE.fullmatch(agent):
+        raise ValueError(f"not an EC2 instance id: {agent!r}")
+    return (f"tail -n 50000 /var/ossec/logs/alerts/alerts.json | jq -r 'select(.agent.name==\"{agent}\") | "
+            f"select((.rule.groups // []) | index(\"siemsoar\")) | \"\\(.rule.id) \\(.timestamp)\"'")
+
+
+def parse_siem_alerts(output: str) -> list[dict]:
+    out = []
+    for line in output.splitlines():
+        rule_id, _, ts = line.strip().partition(" ")
+        when = parse_iso(ts)
+        if rule_id.isdigit() and when is not None:
+            out.append({"rule_id": rule_id, "timestamp": when.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"})
+    return out
+
+
+def in_window(alerts: list[dict], started_at: str, ended_at: str, settle_seconds: int) -> list[dict]:
+    start, end = parse_iso(started_at), parse_iso(ended_at)
+    if start is None or end is None:
+        raise ValueError("scenario run has invalid time bounds")
+    lo, hi = start - timedelta(seconds=5), end + timedelta(seconds=settle_seconds)
+    return [a for a in alerts if lo <= parse_iso(a["timestamp"]) <= hi]
+
+
+def observe_expectations(expect: list[dict], alerts: list[dict]) -> dict[str, bool]:
+    """{"<source>:<rule>": the rule alerted in the SIEM during the run} for every host/network expectation.
+
+    For a shadow rule (`case: false`) this is the only proof it fired; for an active rule it separates a detection
+    miss (no alert) from a pipeline miss (alert but no case).
+    """
+    fired = {a["rule_id"] for a in alerts}
+    return {f"{e['source']}:{e['rule_id']}": str(e["rule_id"]) in fired
+            for e in expect if e["source"] in ("wazuh", "suricata") and e.get("siem_alert", True)}
 
 
 class Runner:
@@ -79,12 +144,25 @@ class Runner:
 
     # ---- discovery ----------------------------------------------------------------
     def instance(self, role: str) -> str:
-        res = self.aws.client("ec2").describe_instances(Filters=[
-            {"Name": "tag:siemsoar:role", "Values": [role]}, {"Name": "instance-state-name", "Values": ["running"]}])
-        ids = [i["InstanceId"] for r in res["Reservations"] for i in r["Instances"]]
+        from siemsoar import response
+        ids = [i["id"] for i in response.find_instances({"siemsoar:role": role, "siemsoar:plane": "ondemand"})]
         if not ids:
             raise SystemExit(f"no running instance with siemsoar:role={role}; start the lab: soarctl lab up")
         return ids[0]
+
+    def private_ip(self, role: str) -> str:
+        from siemsoar import response
+        return response.describe_instance(self.instance(role))["private_ip"]
+
+    def context(self, s: dict) -> dict[str, str]:
+        """Host facts a scenario's commands/args refer to (resolved only when used)."""
+        text = json.dumps({k: s.get(k) for k in ("commands", "prepare", "verify", "cleanup", "atomic")})
+        ctx = {}
+        if "{manager_ip}" in text:
+            ctx["manager_ip"] = self.private_ip("wazuh-manager")
+        if "{sensor_ip}" in text:
+            ctx["sensor_ip"] = self.private_ip("suricata-sensor")
+        return ctx
 
     # ---- executors ----------------------------------------------------------------
     def ssm_run(self, instance_id: str, commands: list[str], timeout: int = 120) -> str:
@@ -92,47 +170,57 @@ class Runner:
         cmd = ssm.send_command(InstanceIds=[instance_id], DocumentName="AWS-RunShellScript",
                                Parameters={"commands": commands, "executionTimeout": [str(timeout)]},
                                TimeoutSeconds=max(30, timeout))["Command"]["CommandId"]
-        end = time.time() + timeout + 30
-        while time.time() < end:
-            time.sleep(2)
-            inv = ssm.get_command_invocation(CommandId=cmd, InstanceId=instance_id)
-            if inv["Status"] in {"Success", "Failed", "Cancelled", "TimedOut"}:
-                if inv["Status"] != "Success":
-                    raise RuntimeError(f"ssm command {inv['Status']}: {inv.get('StandardErrorContent', '')[:300]}")
-                return inv.get("StandardOutputContent", "")
-        raise TimeoutError("ssm command did not finish")
+        try:  # the waiter also tolerates InvocationDoesNotExist right after send_command
+            ssm.get_waiter("command_executed").wait(CommandId=cmd, InstanceId=instance_id,
+                                                    WaiterConfig={"Delay": 2, "MaxAttempts": (timeout + 30) // 2})
+        except WaiterError:
+            pass  # Failed / Cancelled / TimedOut: the invocation below carries the real status
+        inv = ssm.get_command_invocation(CommandId=cmd, InstanceId=instance_id)
+        if inv["Status"] != "Success":
+            raise RuntimeError(f"ssm command {inv['Status']}: {inv.get('StandardErrorContent', '')[:300]}")
+        return inv.get("StandardOutputContent", "")
 
     def exec_ssm_shell(self, s: dict, run_id: str) -> dict:
         iid = self.instance("suricata-sensor" if s.get("target", "sensor") == "sensor" else "wazuh-manager")
-        cmds = [render(c, run_id) for c in s["commands"]]
+        ctx = self.context(s)
+        cmds = [render(c, run_id, ctx) for c in s["commands"]]
         try:
             out = self.ssm_run(iid, cmds)
         finally:
             if s.get("cleanup"):
-                self.ssm_run(iid, [render(c, run_id) for c in s["cleanup"]])
+                self.ssm_run(iid, [render(c, run_id, ctx) for c in s["cleanup"]])
         return {"instance": iid, "output": out[-500:]}
 
     def exec_atomic(self, s: dict, run_id: str) -> dict:
-        """Atomic Red Team test (unmodified upstream YAML) run on the sensor host with atomic-operator.
+        """Atomic Red Team test (unmodified upstream YAML) executed on the sensor by scripts/run_atomic.py.
 
-        The runner script is scripts/run_atomic.py; `verify` commands must succeed afterwards because atomic-operator
-        exits 0 even when the atomic's own command failed (that would otherwise show up as a false negative);
-        `cleanup` commands undo the atomic (the upstream cleanup is not reliable in atomic-operator 0.9.0).
+        Order: `prepare` (e.g. back up a file the atomic changes), the atomic, `verify` (proves the behaviour really
+        happened: a run whose atomic did nothing is an execution error, never a false negative), then `cleanup`.
+        A missing prerequisite makes run_atomic exit 3, which fails the SSM command: also an execution error.
         """
         iid = self.instance("suricata-sensor")
         art = s["atomic"]
-        args = " ".join(f"--arg {k}={render(str(v), run_id)}" for k, v in (art.get("args") or {}).items())
-        env = f"ART_REF={art.get('ref', 'master')}"
-        cmd = (f"{env} /opt/siemsoar/art-venv/bin/python /opt/siemsoar/bootstrap/scripts/run_atomic.py "
-               f"{art['technique']} {art['test_guid']} {args}")
+        ctx = self.context(s)
+        timeout = int(art.get("timeout", 120))
+        args = " ".join(f"--arg {shlex.quote(str(key) + '=' + render(str(value), run_id, ctx))}"
+                        for key, value in (art.get("args") or {}).items())
+        cmd = (f"HOME=/root ART_REF={shlex.quote(art['ref'])} python3 /opt/siemsoar/bootstrap/scripts/run_atomic.py "
+               f"{shlex.quote(art['technique'])} {shlex.quote(art['test_guid'])} {args} --timeout {timeout}").rstrip()
+        report: dict = {}
         try:
-            out = self.ssm_run(iid, [cmd], timeout=int(art.get("timeout", 120)))
+            if s.get("prepare"):
+                self.ssm_run(iid, [render(c, run_id, ctx) for c in s["prepare"]])
+            out = self.ssm_run(iid, [cmd], timeout=timeout + 60)
+            try:
+                report = json.loads(out.strip().splitlines()[-1])
+            except (ValueError, IndexError):
+                report = {"output": out[-500:]}
             for check in s.get("verify", []):
-                self.ssm_run(iid, [render(check, run_id)])
+                self.ssm_run(iid, [render(check, run_id, ctx)])
         finally:
             if s.get("cleanup"):
-                self.ssm_run(iid, [render(c, run_id) for c in s["cleanup"]])
-        return {"instance": iid, "output": out[-500:], "atomic": {k: art[k] for k in ("technique", "test_guid")}}
+                self.ssm_run(iid, [render(c, run_id, ctx) for c in s["cleanup"]])
+        return {"instance": iid, "atomic": {k: art[k] for k in ("technique", "test_guid")}, "report": report}
 
     def exec_guardduty_sample(self, s: dict, run_id: str) -> dict:
         gd = self.aws.client("guardduty")
@@ -140,23 +228,48 @@ class Runner:
         gd.create_sample_findings(DetectorId=det, FindingTypes=s["finding_types"])
         return {"detector": det, "types": s["finding_types"]}
 
+    def victim_credentials(self) -> dict[str, str]:
+        """A fresh access key of the simulation-zone IAM user. Older keys (from earlier runs, possibly disabled by the
+        SOAR) are deleted first: IAM allows two keys per user."""
+        iam, user = self.aws.client("iam"), os.environ.get("SIEMSOAR_SIM_USER", "lab-victim")
+        for key in iam.list_access_keys(UserName=user)["AccessKeyMetadata"]:
+            iam.delete_access_key(UserName=user, AccessKeyId=key["AccessKeyId"])
+        key = iam.create_access_key(UserName=user)["AccessKey"]
+        time.sleep(10)  # IAM is eventually consistent: a brand-new key is not usable immediately
+        return {"AWS_ACCESS_KEY_ID": key["AccessKeyId"], "AWS_SECRET_ACCESS_KEY": key["SecretAccessKey"],
+                "user": user}
+
     def exec_stratus(self, s: dict, run_id: str) -> dict:
         tech = s["stratus_technique"]
+        allowed_account = os.environ.get("SIEMSOAR_LAB_ACCOUNT_ID", "")
+        if not re.fullmatch(r"\d{12}", allowed_account):
+            raise RuntimeError("set SIEMSOAR_LAB_ACCOUNT_ID to the approved 12-digit lab account before Stratus")
+        account = self.aws.client("sts").get_caller_identity()["Account"]
+        if account != allowed_account:
+            raise RuntimeError(f"refusing Stratus in AWS account {account}; expected approved lab account")
+        details = {"technique": tech, "account_id": account}
         try:
-            subprocess.run(["stratus", "detonate", tech], check=True, timeout=600)
+            env = None
+            if s.get("detonate_as") == "victim":
+                subprocess.run(["stratus", "warmup", tech], check=True, timeout=600)  # operator builds the infra
+                creds = self.victim_credentials()
+                details.update(detonated_by=creds["user"], access_key_id=creds["AWS_ACCESS_KEY_ID"])
+                env = {k: v for k, v in os.environ.items() if not k.startswith("AWS_") or k == "AWS_REGION"}
+                env.update({k: creds[k] for k in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY")},
+                           AWS_REGION=self.aws.region())
+            subprocess.run(["stratus", "detonate", tech], check=True, timeout=600, env=env)
         finally:
-            subprocess.run(["stratus", "cleanup", tech], check=False, timeout=600)
-        return {"technique": tech}
+            cleanup = subprocess.run(["stratus", "cleanup", tech], check=False, timeout=600)
+            if cleanup.returncode != 0:
+                raise RuntimeError(f"Stratus cleanup failed for {tech} (exit {cleanup.returncode})")
+        return details
 
     def upload_pcaps(self) -> list[str]:
-        from tools import make_pcaps
+        """The committed captures (rules/pcaps, provenance.json) for pcap_replay scenarios."""
         s3, names = self.aws.client("s3"), []
-        with tempfile.TemporaryDirectory() as tmp:
-            for name, make in make_pcaps.PCAPS.items():
-                path = Path(tmp) / name
-                make_pcaps.write_pcap(path, make())
-                s3.upload_file(str(path), self.rules_bucket, f"sim/pcaps/{name}")
-                names.append(name)
+        for path in sorted(PCAP_DIR.glob("*.pcap")):
+            s3.upload_file(str(path), self.rules_bucket, f"sim/pcaps/{path.name}")
+            names.append(path.name)
         return names
 
     def exec_pcap_replay(self, s: dict, run_id: str) -> dict:
@@ -170,6 +283,27 @@ class Runner:
             f"logger -t siemsoar-sim 'pcap={name} run_id={run_id}'"])
         return {"instance": iid, "pcap": name, "output": out[-300:]}
 
+    def siem_alerts(self, run: dict) -> list[dict]:
+        """Every SIEMSOAR alert Wazuh raised on the run's target inside the run window (any lifecycle state)."""
+        if not run.get("target"):
+            return []
+        output = self.ssm_run(self.instance("wazuh-manager"), [siem_alerts_command(run["target"])])
+        return in_window(parse_siem_alerts(output), run["started_at"], run["ended_at"], run["settle_seconds"])
+
+    def close_benign_cases(self, run: dict, cases: list[dict]) -> list[str]:
+        """Dismiss cases opened on the target during a benign run, as the simulation's ground truth (not a human)."""
+        from siemsoar.decisions import DecisionRejected, apply_decision
+        closed = []
+        for case in cases:
+            if case["status"] == "NOTIFIED" and case_in_run(case, run):
+                try:
+                    apply_decision(self.store, case["case_id"], "approval", "dismiss",
+                                   actor=f"{GROUND_TRUTH_ACTOR}:{run['run_id']}", channel="cli")
+                    closed.append(case["case_id"])
+                except DecisionRejected as err:
+                    self.log(f"could not close {case['case_id']}: {err}")
+        return closed
+
     # ---- robustness ----------------------------------------------------------------
     def _set_fault(self, function: str, point: str) -> None:
         lam = self.aws.client("lambda")
@@ -179,17 +313,27 @@ class Runner:
         lam.update_function_configuration(FunctionName=name, Environment={"Variables": env})
         lam.get_waiter("function_updated_v2").wait(FunctionName=name)
 
-    def _inject_finding(self, run_id: str, instance_id: str, severity: float = 5.0) -> str:
-        """Replay a GuardDuty-shaped finding through the real ingest Lambda (same path as EventBridge)."""
-        now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-        event = {"source": "aws.guardduty", "detail-type": "GuardDuty Finding", "detail": {
-            "id": f"sim-{run_id}", "type": "UnauthorizedAccess:EC2/SSHBruteForce", "severity": severity,
-            "accountId": "000000000000", "region": self.aws.region(), "title": f"[SIMULATION] {run_id}",
-            "description": "synthetic finding injected by simulation.runner", "createdAt": now,
-            "resource": {"resourceType": "Instance", "instanceDetails": {"instanceId": instance_id}},
-            "service": {"eventFirstSeen": now, "additionalInfo": {"sample": False}}}}
-        out = self.aws.client("lambda").invoke(FunctionName=f"{self.prefix}-ingest", Payload=json.dumps(event))
-        return json.loads(out["Payload"].read())["case_id"]
+    def _open_case_via(self, trigger: str, run_id: str) -> str:
+        """Run the real trigger scenario (e.g. Atomic Red Team T1136.001) and return the case Wazuh opened for it.
+
+        Nothing is injected: the case exists because the genuine detection chain fired. Cases are matched on rule,
+        source and the creation window, like evaluation.attribute does for scenarios without a run_id.
+        """
+        scenario = load_scenarios()[trigger]
+        wanted = [e for e in scenario.get("expect", []) if e.get("case", True) and not e.get("optional")]
+        if not wanted:
+            raise RuntimeError(f"trigger scenario {trigger} does not expect a case")
+        since = datetime.now(UTC) - timedelta(seconds=5)
+        getattr(self, f"exec_{scenario['kind']}")(scenario, run_id)
+        deadline = time.time() + int(scenario.get("settle_seconds", 120)) + 120
+        while time.time() < deadline:
+            for case in self.store.list_cases():
+                created = parse_iso(case.get("created_at"))
+                if (created and created >= since and case["source"] == wanted[0]["source"]
+                        and str(case["rule_id"]) == str(wanted[0]["rule_id"])):
+                    return case["case_id"]
+            time.sleep(5)
+        raise TimeoutError(f"no case for {wanted[0]['source']}:{wanted[0]['rule_id']} after running {trigger}")
 
     def _wait_status(self, case_id: str, statuses: set[str], timeout: int = 180) -> dict:
         end = time.time() + timeout
@@ -202,8 +346,7 @@ class Runner:
 
     def check_double_click(self, s: dict, run_id: str) -> list[dict]:
         from siemsoar.decisions import DecisionRejected, apply_decision
-        iid = self.instance("suricata-sensor")
-        case_id = self._inject_finding(run_id, iid)
+        case_id = self._open_case_via(s["trigger"], run_id)
         self._wait_status(case_id, {"NOTIFIED"})
 
         def click(_):
@@ -220,18 +363,17 @@ class Runner:
                 {"name": "case DISMISSED once", "ok": case["status"] == "DISMISSED", "detail": case_id}]
 
     def check_mid_failure(self, s: dict, run_id: str) -> list[dict]:
-        from handlers._common import config_of  # noqa: F401  (import check: handlers on path)
         from siemsoar import evidence, response
         from siemsoar.decisions import apply_decision
         iid = self.instance("suricata-sensor")
-        original = response.describe_instance(iid)["security_groups"]
+        original = response.eni_groups(response.describe_instance(iid))
         self._set_fault("contain", s["fault"])
         try:
-            case_id = self._inject_finding(run_id, iid)
+            case_id = self._open_case_via(s["trigger"], run_id)
             self._wait_status(case_id, {"NOTIFIED"})
             apply_decision(self.store, case_id, "approval", "approve", actor=f"sim:{run_id}", channel="cli")
             case = self._wait_status(case_id, {"FAILED"}, timeout=300)
-            isolated = response.describe_instance(iid)["security_groups"] != original
+            isolated = response.eni_groups(response.describe_instance(iid)) != original
             checks = [{"name": "case FAILED (fail-safe)", "ok": case["status"] == "FAILED", "detail": case_id},
                       {"name": "resource left contained", "ok": isolated, "detail": case.get("safe_state")},
                       {"name": "operator alerted", "ok": "notified:failed" in
@@ -239,15 +381,15 @@ class Runner:
         finally:
             self._set_fault("contain", "")
         pre, _ = evidence.get_json(case_id, "pre_action_state")  # manual recovery a human would do
-        response.restore_instance_sgs(iid, pre["security_groups"])
+        response.restore_instance_sgs(iid, pre["security_groups"],
+                                      groups_by_eni={n["id"]: n["groups"] for n in pre.get("network_interfaces", [])})
         return checks
 
     def check_slack_down(self, s: dict, run_id: str) -> list[dict]:
         from siemsoar.decisions import apply_decision
-        iid = self.instance("suricata-sensor")
         self._set_fault("notify", s["fault"])
         try:
-            case_id = self._inject_finding(run_id, iid)
+            case_id = self._open_case_via(s["trigger"], run_id)
             self._wait_status(case_id, {"NOTIFIED"})
             notified = [a for a in self.store.list_audit(case_id) if a["action"] == "notified:approval"][0]["detail"]
             apply_decision(self.store, case_id, "approval", "dismiss", actor=f"sim:{run_id}", channel="cli")
@@ -267,7 +409,9 @@ class Runner:
         started = datetime.now(UTC)
         self.log(f"{run_id}: {s['title']}")
         run = {"run_id": run_id, "scenario": scenario_id, "kind": s["kind"], "malicious": bool(s.get("malicious")),
-               "canary": bool(s.get("canary")), "techniques": s.get("techniques", []), "expect": s.get("expect", []),
+               "canary": bool(s.get("canary")), "evaluation_scope": s.get("evaluation_scope", "detection"),
+               "techniques": s.get("techniques") or [], "technique_source": s.get("technique_source"),
+               "evidence": bool(s.get("evidence")), "expect": s.get("expect", []),
                "started_at": started.strftime("%Y-%m-%dT%H:%M:%S.%fZ")[:-4] + "Z"}
         if self.dry_run:
             plan = {k: v for k, v in s.items() if k != "_file"}
@@ -283,25 +427,44 @@ class Runner:
                 details = getattr(self, f"exec_{kind}")(s, run_id)
         except Exception as err:  # noqa: BLE001
             run["result"] = {"pass": False, "checks": [{"name": "execution", "ok": False, "detail": str(err)}]}
+            run["execution_error"] = str(err)  # evaluation must not count this run's expectations as false negatives
             self.log(f"scenario error: {err}")
-        run["ended_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")[:-4] + "Z"
-        run["details"] = details
+        ended = datetime.now(UTC)
+        run["ended_at"] = ended.strftime("%Y-%m-%dT%H:%M:%S.%fZ")[:-4] + "Z"
+        run["settle_seconds"] = int(s.get("settle_seconds", 120))
+        run["details"] = {k: v for k, v in details.items() if k != "instance"}
+        run["target"] = details.get("instance")
         self.store.put_run(run)
         if kind != "robustness" and self.wait and "result" not in run:
-            settle = int(s.get("settle_seconds", 120))
+            settle = run["settle_seconds"]
             self.log(f"waiting {settle}s for detections")
             time.sleep(settle)
-            window_start = (started - timedelta(seconds=5)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-            cases = [c for c in self.store.list_cases() if c["created_at"] >= window_start]
-            checks = match_expectations(s.get("expect", []), cases)
+            cases = self.store.list_cases()
+            checks = match_expectations(s.get("expect", []), cases, run_id,
+                                       run["started_at"], run["ended_at"], settle)
+            run["siem_alerts"] = self.siem_alerts(run)
+            run["observed"] = observe_expectations(s.get("expect", []), run["siem_alerts"])
+            checks += [{"name": f"{key} alert observed in the SIEM", "ok": ok, "detail": ""}
+                       for key, ok in run["observed"].items() if ok or not _optional(s, key)]
+            mine = [c for c in cases if case_in_run(c, run)]
+            if not run["malicious"]:
+                expected = {str(e["rule_id"]) for e in s.get("expect", [])}  # incl. declared false positives
+                noise = sorted({a["rule_id"] for a in run["siem_alerts"]} - expected)
+                checks.append({"name": "benign activity raised no unexpected SIEMSOAR alert", "ok": not noise,
+                               "detail": noise})
+                run["ground_truth_closed"] = self.close_benign_cases(run, mine)
             run["result"] = {"pass": all(c["ok"] for c in checks), "checks": checks,
-                             "observed_cases": [c["case_id"] for c in cases]}
+                             "observed_cases": [c["case_id"] for c in mine]}
             self.store.put_run(run)
         res = run.get("result", {})
         self.log(f"{run_id}: {'PASS' if res.get('pass') else 'FAIL' if res else 'recorded'}")
         for c in res.get("checks", []):
             self.log(f"   {'ok ' if c['ok'] else 'BAD'} {c['name']} {c.get('detail', '')}")
         return run
+
+
+def _optional(s: dict, key: str) -> bool:
+    return any(f"{e['source']}:{e['rule_id']}" == key and e.get("optional") for e in s.get("expect", []))
 
 
 def main(argv: list[str] | None = None) -> int:

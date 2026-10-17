@@ -38,11 +38,19 @@ if [ "$TARGET" = "manager" ]; then
 else
   DEST=/var/lib/suricata/rules/siemsoar.rules
   BACKUP="$STATE_DIR/siemsoar.rules.prev"
+  DISABLE=/etc/suricata/disable.conf
   [ -f "$DEST" ] && cp -p "$DEST" "$BACKUP" || true
+  [ -f "$DISABLE" ] && cp -p "$DISABLE" "$STATE_DIR/disable.conf.prev" || true
   install -m 644 "$WORK/suricata/siemsoar.rules" "$DEST"
+  # managed ET Open sids ship (pinned) in siemsoar.rules: suricata-update must drop its own copy of them
+  install -m 644 "$WORK/suricata/disable.conf" "$DISABLE"
+  suricata-update --offline --no-reload --no-test >/dev/null 2>&1 || suricata-update --no-reload --no-test >/dev/null 2>&1 \
+    || log "suricata-update failed: ET Open set unchanged"
   if ! suricata -T -c /etc/suricata/suricata.yaml >/dev/null 2>&1; then
     log "suricata -T FAILED, rolling back"
     [ -f "$BACKUP" ] && install -m 644 "$BACKUP" "$DEST" || : > "$DEST"
+    [ -f "$STATE_DIR/disable.conf.prev" ] && install -m 644 "$STATE_DIR/disable.conf.prev" "$DISABLE" || rm -f "$DISABLE"
+    suricata-update --offline --no-reload --no-test >/dev/null 2>&1 || true
     exit 1
   fi
   systemctl reload suricata 2>/dev/null || systemctl restart suricata

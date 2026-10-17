@@ -1,33 +1,22 @@
-"""Small case lifecycle operations used by the workflow: expire, acknowledge, dismiss feedback, fail-safe."""
+"""Small case lifecycle operations used by the workflow: expire, acknowledge, fail-safe."""
 
 from __future__ import annotations
+
+import logging
 
 from botocore.exceptions import ClientError
 from siemsoar.notifier import notify_case
 from siemsoar.states import TERMINAL, Status
 from siemsoar.store import InvalidTransition
-from siemsoar.util import epoch, get_logger, iso
 
 from handlers._common import load, state_of
 
-log = get_logger("handlers.case_ops")
+log = logging.getLogger("handlers.case_ops")
 
 
 def _expire(store, case, event):
     store.transition(case["case_id"], Status.EXPIRED, detail={"reason": "approval_timeout"})
     return {"status": "EXPIRED"}
-
-
-def _record_feedback(store, case, event):
-    """False-positive feedback loop: persisted per rule so `rulesctl tune-report` can propose tuning."""
-    state = state_of(event)
-    decision = (state.get("restore_decision") or state.get("approval") or {}).get("decision")
-    store.table.put_item(Item={
-        "pk": f"FEEDBACK#{case['rule_id']}", "sk": f"{iso()}#{case['case_id']}", "case_id": case["case_id"],
-        "source": case["source"], "resource_id": case["resource_id"], "decision": decision,
-        "run_id": case.get("run_id") or "", "ttl": epoch() + 180 * 86400})
-    store.audit(case["case_id"], "fp_feedback_recorded", "system", {"rule_id": case["rule_id"]})
-    return {"feedback": "recorded", "rule_id": case["rule_id"]}
 
 
 def _fail_safe(store, case, event):
@@ -64,7 +53,7 @@ def _finalize_status(status: Status, reason: str):
     return run
 
 
-OPS = {"expire": _expire, "feedback": _record_feedback, "fail_safe": _fail_safe,
+OPS = {"expire": _expire, "fail_safe": _fail_safe,
        "acknowledged": _finalize_status(Status.ACKNOWLEDGED, "no_response_plan_ack")}
 
 

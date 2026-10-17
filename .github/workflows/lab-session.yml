@@ -22,7 +22,8 @@ concurrency:
 
 env:
   TF_DIR: infra/envs/lab
-  AWS_REGION: ap-southeast-1
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  TF_VAR_region: ${{ vars.AWS_REGION || 'us-east-1' }}
   TF_VAR_alert_email: ${{ vars.ALERT_EMAIL }}
   TF_VAR_slack_channel: ${{ vars.SLACK_CHANNEL }}
   TF_VAR_dry_run: ${{ vars.DRY_RUN || 'true' }}
@@ -45,7 +46,7 @@ jobs:
         with:
           terraform_version: "1.10.5"
           terraform_wrapper: false
-      - run: terraform -chdir=$TF_DIR init -input=false -backend-config="bucket=${{ vars.TFSTATE_BUCKET }}"
+      - run: terraform -chdir=$TF_DIR init -input=false -backend-config="bucket=${{ vars.TFSTATE_BUCKET }}" -backend-config="region=$AWS_REGION"
 
       - name: down - stop timer + instances first, then destroy the plane
         if: inputs.action == 'down'
@@ -59,14 +60,19 @@ jobs:
 
       - name: up/extend - start the instances and arm the auto-stop timer
         if: inputs.action != 'down'
-        run: python -m tools.labctl ${{ inputs.action == 'extend' && 'extend' || 'up' }} --hours "${{ inputs.hours }}"
+        env:
+          ACTION: ${{ inputs.action }}
+          HOURS: ${{ inputs.hours }}
+        run: python -m tools.labctl "$ACTION" --hours "$HOURS"
 
       - name: Session summary
         if: inputs.action != 'down'
+        env:
+          HOURS: ${{ inputs.hours }}
         run: |
           {
             echo '### Lab is up'
-            echo "Auto-stop in ${{ inputs.hours }} h. Wazuh needs ~10-15 min to finish installing on first boot."
+            echo "Auto-stop in ${HOURS} h. Wazuh needs ~10-15 min to finish installing on first boot."
             echo '```'
             terraform -chdir=$TF_DIR output -raw lab 2>/dev/null || terraform -chdir=$TF_DIR output lab
             echo '```'

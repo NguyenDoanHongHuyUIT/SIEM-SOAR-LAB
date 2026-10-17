@@ -8,15 +8,15 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 
 from siemsoar import slack
 from siemsoar.config import settings
 from siemsoar.decisions import DecisionRejected, apply_decision
 from siemsoar.ssm import get_param
 from siemsoar.store import CaseNotFound, CaseStore
-from siemsoar.util import get_logger
 
-log = get_logger("handlers.slack_interact")
+log = logging.getLogger("handlers.slack_interact")
 
 
 def _resp(status: int, body: dict | None = None) -> dict:
