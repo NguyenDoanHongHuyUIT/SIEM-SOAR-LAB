@@ -28,6 +28,10 @@ env:
   TF_VAR_slack_channel: ${{ vars.SLACK_CHANNEL }}
   TF_VAR_dry_run: ${{ vars.DRY_RUN || 'true' }}
 
+defaults:
+  run:
+    shell: bash # = bash -eo pipefail: a failure before `| tee` fails the step (it was silently green)
+
 jobs:
   session:
     runs-on: ubuntu-latest

@@ -16,9 +16,11 @@ resource "aws_ssm_document" "deploy_rules" {
       name   = "deploy"
       inputs = {
         timeoutSeconds = "600"
+        # aws:runShellScript runs /bin/sh (dash on Ubuntu): POSIX options only. `set -o pipefail` failed the first
+        # real deployment; deploy_rules.sh itself runs under bash with pipefail.
         runCommand = [
-          "set -euo pipefail",
-          "aws s3 sync s3://${var.rules_bucket}/bootstrap/ /opt/siemsoar/bootstrap/ --region ${local.region}",
+          "set -eu",
+          "aws s3 sync s3://${var.rules_bucket}/bootstrap/ /opt/siemsoar/bootstrap/ --region ${local.region} --only-show-errors",
           "bash /opt/siemsoar/bootstrap/scripts/deploy_rules.sh {{ Target }} {{ Release }}",
         ]
       }

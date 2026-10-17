@@ -22,6 +22,10 @@ concurrency:
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
 
+defaults:
+  run:
+    shell: bash # = bash -eo pipefail: a failure before `| tee` fails the step (it was silently green)
+
 jobs:
   deploy:
     if: vars.RULES_ROLE_ARN != '' # nothing to deploy to before infra/bootstrap

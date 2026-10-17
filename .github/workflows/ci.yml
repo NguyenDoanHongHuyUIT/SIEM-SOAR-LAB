@@ -11,6 +11,10 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+defaults:
+  run:
+    shell: bash # = bash -eo pipefail: a failure before `| tee` fails the step (it was silently green)
+
 jobs:
   python:
     name: lint + unit tests
@@ -96,8 +100,10 @@ jobs:
         # wazuh-control exits non-zero in the container for daemons it does not run there; what matters is analysisd
         # the container may still be in its first start: wait for analysisd, restart, wait again (up to 5 min each)
         run: |
-          up() { for _ in $(seq 1 60); do docker exec wazuh /var/ossec/bin/wazuh-control status 2>/dev/null \
-                   | grep -q "wazuh-analysisd is running" && return 0; sleep 5; done; return 1; }
+          # `status` exits non-zero when any daemon is down (some never run in the container): with pipefail a pipe
+          # into grep would fail even when analysisd runs, so read the output first
+          up() { for _ in $(seq 1 60); do s=$(docker exec wazuh /var/ossec/bin/wazuh-control status 2>/dev/null || true)
+                   grep -q "wazuh-analysisd is running" <<<"$s" && return 0; sleep 5; done; return 1; }
           up
           docker exec wazuh /var/ossec/bin/wazuh-control restart || true
           up

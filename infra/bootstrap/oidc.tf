@@ -142,9 +142,10 @@ data "aws_iam_policy_document" "rules_perm" {
     resources = ["arn:aws:s3:::${var.name_prefix}-rules-${data.aws_caller_identity.me.account_id}"]
   }
   statement {
-    sid       = "RunDeployDocument"
-    actions   = ["ssm:SendCommand"]
-    resources = ["arn:aws:ssm:${var.region}::document/${var.name_prefix}-deploy-rules"]
+    sid     = "RunDeployDocument"
+    actions = ["ssm:SendCommand"]
+    # account-owned documents carry the account id; the account-less form only matches AWS-owned documents
+    resources = ["arn:aws:ssm:${var.region}:${data.aws_caller_identity.me.account_id}:document/${var.name_prefix}-deploy-rules"]
   }
   statement {
     sid       = "TargetOnlyLabInstances"
