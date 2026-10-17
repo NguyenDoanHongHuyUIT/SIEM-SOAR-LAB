@@ -14,7 +14,8 @@ log "instance=$INSTANCE_ID iface=$IFACE manager=$MANAGER_IP"
 
 # ---- Suricata (OISF stable PPA) + traffic tools used by the simulation scenarios
 apt-get install -y software-properties-common
-add-apt-repository -y ppa:oisf/suricata-stable
+# suricata-7.0, not suricata-stable (now 8.x): the CI tests run Suricata 7.0 (jasonish/suricata:7.0), keep the same line
+add-apt-repository -y ppa:oisf/suricata-7.0
 apt-get update -y
 # tcpreplay: pcap_replay scenarios; python3-yaml: scripts/run_atomic.py; the rest are the prerequisites the lab's Atomic Red
 # Team tests declare (T1046 test 2: nmap, telnet, nc; T1110.004 test 1: sshpass)

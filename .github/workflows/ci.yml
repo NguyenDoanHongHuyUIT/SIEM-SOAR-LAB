@@ -55,13 +55,10 @@ jobs:
           python -m tools.rulesctl lifecycle --base "origin/${{ github.base_ref }}" $REVERT
       - name: Build release (also proves the generated Wazuh/Suricata files parse)
         run: python -m tools.rulesctl build --out dist --sha "${GITHUB_SHA}"
-      - name: Install Suricata for the authoritative syntax + pcap replay test
-        run: |
-          sudo add-apt-repository -y ppa:oisf/suricata-stable
-          sudo apt-get update -y
-          sudo apt-get install -y suricata
+      # Same engine line as the lab sensor (ppa:oisf/suricata-7.0, see suricata/bootstrap_sensor.sh): the official
+      # OISF-maintained container, so the runner's apt state and file permissions do not matter
       - name: "suricata -T and pcap replay (every metadata test - true positives, near-misses, benign traffic)"
-        run: python -m tools.suricata_pcap_test --rules "dist/${GITHUB_SHA}/suricata/siemsoar.rules"
+        run: python -m tools.suricata_pcap_test --rules "dist/${GITHUB_SHA}/suricata/siemsoar.rules" --docker-image jasonish/suricata:7.0
       - name: Coverage report
         run: python -m tools.rulesctl coverage | tee "$GITHUB_STEP_SUMMARY"
 
@@ -96,15 +93,15 @@ jobs:
       - name: wazuh-analysisd -t (the same syntax check the host runs at deploy time, now at PR time)
         run: docker exec wazuh /var/ossec/bin/wazuh-analysisd -t
       - name: Restart the manager so analysisd loads the rules (FIM events go through analysisd, not logtest)
-        run: docker exec wazuh /var/ossec/bin/wazuh-control restart
+        # wazuh-control exits non-zero in the container for daemons it does not run there; what matters is analysisd
+        run: |
+          docker exec wazuh /var/ossec/bin/wazuh-control restart || true
+          docker exec wazuh /var/ossec/bin/wazuh-control status | grep "wazuh-analysisd is running"
       - name: every Wazuh rule test on the real engine (logtest API for logs, analysisd queue for FIM events)
         run: python -m tools.wazuh_logtest --url https://localhost:55000 --user "$WAZUH_API_USER" --container wazuh --wait 240 --strict
       - name: Suricata + Wazuh hand-off (real EVE alerts from a real Suricata replay -> logtest -> mapping rule, groups, MITRE)
         run: |
-          sudo add-apt-repository -y ppa:oisf/suricata-stable
-          sudo apt-get update -y
-          sudo apt-get install -y suricata
-          python -m tools.eve_logtest --rules "dist/${GITHUB_SHA}/suricata/siemsoar.rules" \
+          python -m tools.eve_logtest --rules "dist/${GITHUB_SHA}/suricata/siemsoar.rules" --docker-image jasonish/suricata:7.0 \
             --url https://localhost:55000 --user "$WAZUH_API_USER" --wait 120
       - if: failure()
         run: docker logs wazuh | tail -100
@@ -166,10 +163,10 @@ jobs:
         run: |
           terraform -chdir=infra/envs/lab init -backend=false -input=false
           terraform -chdir=infra/envs/lab test
+      # Official Trivy image pinned by digest (the trivy-action installer step broke): report-only, the lab intentionally
+      # uses AdministratorAccess for apply and SSE-S3 instead of customer-managed KMS keys (documented limits)
       - name: Security scan (Trivy config)
-        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1, pinned by commit (tags can be moved)
-        with:
-          scan-type: config
-          scan-ref: infra
-          severity: HIGH,CRITICAL
-          exit-code: "0" # report-only: the lab intentionally uses AdministratorAccess for apply (documented limit)
+        run: >-
+          docker run --rm -v "$PWD/infra:/src:ro"
+          aquasec/trivy@sha256:a22415a38938a56c379387a8163fcb0ce38b10ace73e593475d3658d578b2436
+          config --severity HIGH,CRITICAL --exit-code 0 --skip-dirs /src/envs/lab/.terraform --skip-dirs /src/bootstrap/.terraform /src
