@@ -71,3 +71,19 @@ def test_wazuh_and_suricata_cases(store, sfn):
     b = ingest_handler.handler(ev.SURICATA)
     assert store.get_case(a["case_id"])["run_id"] == "run-20261006-01"
     assert store.get_case(b["case_id"])["source"] == "suricata"
+
+
+def test_a_recurring_guardduty_finding_is_not_mistaken_for_a_redelivery(store):
+    """GuardDuty re-publishes a recurring finding with the SAME id and a new updatedAt/service.count. Only an
+    identical event (EventBridge at-least-once delivery) is a duplicate; observed on AWS with sample findings."""
+    first = ev.clone(ev.guardduty_instance())
+    first["detail"]["updatedAt"] = "2026-10-17T15:52:00.000Z"
+    a = pipeline.ingest(schema.normalize_event(first), store, start=lambda cid: "arn:exec")
+    assert pipeline.ingest(schema.normalize_event(ev.clone(first)), store,
+                           start=lambda cid: "arn:exec")["action"] == "duplicate_delivery"
+    again = ev.clone(first)
+    again["detail"]["updatedAt"] = "2026-10-17T16:01:00.000Z"
+    again["detail"]["service"]["count"] = 4
+    b = pipeline.ingest(schema.normalize_event(again), store, start=lambda cid: "arn:exec")
+    assert b["action"] == "deduplicated" and b["case_id"] == a["case_id"]
+    assert store.get_case(a["case_id"])["alert_count"] == 2

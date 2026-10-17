@@ -57,3 +57,17 @@ def test_respond_ignores_non_slack_hosts(monkeypatch):
     monkeypatch.setattr(slack, "_request", lambda *a, **k: called.append(a))
     slack.respond("https://evil.example/x", "t", [])
     assert not called
+
+
+def test_every_button_has_its_own_action_id():
+    """Slack answers invalid_blocks ("action_id already exists") when two buttons of one block share an action_id:
+    observed on the real API with the first deployed card, every notification then fell back to SNS."""
+    from siemsoar import slack as sl
+    for plan in ("none", "ec2_isolate"):
+        for gate in ("approval", "restore"):
+            case = {"case_id": "C-1", "title": "t", "source": "guardduty", "rule_id": "r", "response_plan": {"type": plan}}
+            for block in sl.card_blocks(case, gate):
+                if block["type"] == "actions":
+                    ids = [e["action_id"] for e in block["elements"]]
+                    assert len(ids) == len(set(ids)), (plan, gate, ids)
+                    assert all(len(e["value"].split("|")) == 3 for e in block["elements"])

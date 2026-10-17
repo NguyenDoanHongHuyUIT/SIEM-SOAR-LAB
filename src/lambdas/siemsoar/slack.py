@@ -68,7 +68,11 @@ def _button(text: str, value: str, action_id: str, style: str | None = None, con
 
 
 def card_blocks(case: dict, gate: str) -> list[dict]:
-    """Cards carry only case_id|gate|decision. The Step Functions task token stays server side."""
+    """Cards carry only case_id|gate|decision. The Step Functions task token stays server side.
+
+    Every button needs its own action_id inside an actions block (Slack rejects the whole message with
+    invalid_blocks otherwise); slack_interact reads the decision from `value`, not from the action_id.
+    """
     cid = case["case_id"]
     emoji = SEV_EMOJI.get(case.get("severity_label", "info"), ":white_circle:")
     blocks: list[dict] = [
@@ -79,16 +83,16 @@ def card_blocks(case: dict, gate: str) -> list[dict]:
         blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": case["description"][:280]}]})
     if gate == "approval":
         if case.get("response_plan", {}).get("type", "none") == "none":
-            actions = [_button("Acknowledge", f"{cid}|approval|acknowledge", "decide", "primary"),
-                       _button("False positive", f"{cid}|approval|dismiss", "decide")]
+            actions = [_button("Acknowledge", f"{cid}|approval|acknowledge", "decide_acknowledge", "primary"),
+                       _button("False positive", f"{cid}|approval|dismiss", "decide_dismiss")]
         else:
-            actions = [_button("Approve containment", f"{cid}|approval|approve", "decide", "danger",
+            actions = [_button("Approve containment", f"{cid}|approval|approve", "decide_approve", "danger",
                                "This will isolate/disable the resource."),
-                       _button("Dismiss (false positive)", f"{cid}|approval|dismiss", "decide")]
+                       _button("Dismiss (false positive)", f"{cid}|approval|dismiss", "decide_dismiss")]
     else:
-        actions = [_button("Restore: threat remediated", f"{cid}|restore|restore_tp", "decide", "primary",
+        actions = [_button("Restore: threat remediated", f"{cid}|restore|restore_tp", "decide_restore_tp", "primary",
                            "Restore original access after remediation?"),
-                   _button("Restore: false positive", f"{cid}|restore|restore_fp", "decide")]
+                   _button("Restore: false positive", f"{cid}|restore|restore_fp", "decide_restore_fp")]
     blocks.append({"type": "actions", "block_id": f"{gate}:{cid}", "elements": actions})
     return blocks
 

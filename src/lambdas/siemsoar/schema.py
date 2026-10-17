@@ -210,9 +210,13 @@ def normalize_guardduty(detail: dict) -> dict:
     sev = _scale(severity, maximum)
     event_time = _event_time(service.get("eventFirstSeen") or detail.get("createdAt"), "GuardDuty event time")
     entities = extract_entities("guardduty", detail)
+    # GuardDuty keeps the finding id when the activity recurs and only bumps service.count / updatedAt, so the id alone
+    # would make every recurrence look like an EventBridge re-delivery and drop it. One delivery = one finding version.
+    version = detail.get("updatedAt") or service.get("count") or ""
     return {
         "source": "guardduty",
         "source_id": finding_id,
+        "delivery_id": f"{finding_id}@{version}",
         "rule_id": ftype,
         "title": detail.get("title", ftype),
         "description": detail.get("description", ""),

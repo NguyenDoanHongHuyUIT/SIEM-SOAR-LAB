@@ -16,4 +16,8 @@ def handler(event, context=None):
     except UnsupportedEvent as err:
         log.warning("ignored event", extra={"ctx": {"reason": str(err)}})
         return {"action": "ignored", "reason": str(err)}
-    return ingest(alert)
+    result = ingest(alert)
+    # every outcome is logged: a silently dropped event is indistinguishable from an event that never arrived
+    log.info("ingest %s", result["action"], extra={"ctx": {**result, "source": alert["source"],
+                                                           "rule_id": alert["rule_id"]}})
+    return result

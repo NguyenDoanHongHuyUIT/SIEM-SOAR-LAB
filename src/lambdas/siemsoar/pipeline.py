@@ -48,7 +48,7 @@ def ingest(alert: dict, store: CaseStore | None = None,
     removed again, otherwise the retry EventBridge schedules would be dropped as a "duplicate" and the alert lost.
     """
     store = store or CaseStore()
-    delivery = f"{alert['source']}:{alert['source_id']}"
+    delivery = f"{alert['source']}:{alert.get('delivery_id') or alert['source_id']}"
     if not store.first_delivery(delivery):
         return {"action": "duplicate_delivery", "source_id": alert["source_id"]}
     try:
