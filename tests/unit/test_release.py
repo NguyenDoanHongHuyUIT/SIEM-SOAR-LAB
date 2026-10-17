@@ -136,3 +136,12 @@ def test_every_workflow_runs_bash_with_pipefail():
     for path in sorted((Path(__file__).resolve().parents[2] / ".github/workflows").glob("*.yml")):
         doc = yaml.safe_load(path.read_text(encoding="utf-8"))
         assert (doc.get("defaults") or {}).get("run", {}).get("shell") == "bash", path.name
+
+
+def test_ssm_run_commands_are_posix_sh():
+    """aws:runShellScript executes with /bin/sh (dash): `set -o pipefail` there failed the first deployment."""
+    import re
+    from pathlib import Path
+    tf = (Path(__file__).resolve().parents[2] / "infra/modules/lab-ondemand/ssm_docs.tf").read_text(encoding="utf-8")
+    commands = re.search(r"runCommand = \[(.*?)\]", tf, re.S).group(1)
+    assert "pipefail" not in commands and "source " not in commands and "[[" not in commands
