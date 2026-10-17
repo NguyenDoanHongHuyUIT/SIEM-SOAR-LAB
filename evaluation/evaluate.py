@@ -300,9 +300,10 @@ def compute_metrics(cases: list[dict], runs: list[dict], rules_meta: dict | None
         "detection_quality": detection_quality(runs, rules_meta),
         "pipeline_canary": cls["canary"],
         "attack_coverage": attack_coverage(rules_meta, runs, cls["labels"], cases),
+        # same population on both sides: excluded cases (samples, failed runs) have their alerts excluded too
         "alert_duplication_reduction": {
-            "alerts": total_alerts, "cases": len(cases),
-            "reduction": round(1 - len(cases) / total_alerts, 3) if total_alerts else None},
+            "alerts": total_alerts, "cases": len(measured_cases),
+            "reduction": round(1 - len(measured_cases) / total_alerts, 3) if total_alerts else None},
         "rule_deployment_lead_time_s": summary(lead),
         "robustness": {"runs": len(robustness), "passed": sum(1 for r in robustness if r.get("result", {}).get("pass")),
                        "detail": [{"run": r["run_id"], "scenario": r["scenario"], "pass": r.get("result", {}).get("pass"),
@@ -414,7 +415,7 @@ def _nonnegative_float(value, field: str) -> float:
 def _read_csv(path: str | None, expected_columns: set[str]) -> list[dict]:
     if not path or not Path(path).exists():
         return []
-    with open(path, newline="") as fh:
+    with open(path, newline="", encoding="utf-8") as fh:
         reader = csv.DictReader(line for line in fh if not line.lstrip().startswith("#"))
         columns = reader.fieldnames or []
         if len(columns) != len(set(columns)) or set(columns) != expected_columns:
@@ -485,7 +486,7 @@ def main(argv: list[str] | None = None) -> int:
     baseline = _read_csv(args.baseline, {"scenario", "run", "seconds_to_notice", "seconds_to_contain", "manual_steps",
                                          "errors", "notes"})
     if args.offline:
-        cases, runs = (json.loads(Path(p).read_text()) for p in args.offline)
+        cases, runs = (json.loads(Path(p).read_text(encoding="utf-8")) for p in args.offline)
     else:
         import os
         os.environ.setdefault("NAME_PREFIX", args.prefix)
@@ -514,8 +515,8 @@ def main(argv: list[str] | None = None) -> int:
     m = compute_metrics(cases, runs, rulesctl.load_metadata(), baseline, deployments, cost)
     out = Path(args.out) / datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     out.mkdir(parents=True, exist_ok=True)
-    (out / "metrics.json").write_text(json.dumps(m, indent=2, default=str))
-    (out / "metrics.md").write_text(render_markdown(m))
+    (out / "metrics.json").write_text(json.dumps(m, indent=2, default=str), encoding="utf-8")
+    (out / "metrics.md").write_text(render_markdown(m), encoding="utf-8")
     print(f"wrote {out}/metrics.json and metrics.md")
     return 0
 

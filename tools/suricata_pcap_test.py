@@ -81,7 +81,7 @@ class Suricata:
             if res.returncode:
                 raise RuntimeError(f"suricata replay failed ({res.returncode}): {res.stderr[-600:]}")
             eve = work / "log" / "eve.json"
-            return [json.loads(line) for line in eve.read_text().splitlines()] if eve.exists() else []
+            return [json.loads(line) for line in eve.read_text(encoding="utf-8").splitlines()] if eve.exists() else []
 
 
 def alert_events(events: list[dict], sids: set[int] | None = None) -> list[dict]:
