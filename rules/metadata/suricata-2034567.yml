@@ -1,0 +1,27 @@
+id: suricata-2034567
+engine: suricata
+source: et-open
+rule_id: 2034567
+wazuh_rule_id: 110103
+level: 4
+name: curl to a bare IP address (ET HUNTING, kept as a measured false-positive example)
+state: shadow
+response: none
+mitre: []                # a hunting heuristic: no technique is claimed
+references:
+  - https://rules.emergingthreats.net/open/suricata-7.0.3/rules/emerging-hunting.rules
+owner: nguyen-doan-hong-huy
+created: 2026-10-15
+data_source: Suricata EVE JSON via Wazuh agent
+description: >
+  ET HUNTING rule: an HTTP request with a curl user agent sent to a dotted-quad host. It fires on the benign capture,
+  which is the point: it shows why new rules start in shadow and how the benign scenarios measure their false positives.
+expected_fp: >
+  Most of its hits. Administrators, health checks and cloud-init all curl IP addresses (169.254.169.254 on every EC2).
+tests:
+  - name: administrator curl to an IP (benign, but the heuristic fires)
+    expect: match
+    pcap: benign_http_clients.pcap
+  - name: port scan only
+    expect: no_match
+    pcap: t1046_nmap_syn_scan.pcap

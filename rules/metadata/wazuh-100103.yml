@@ -1,0 +1,31 @@
+id: wazuh-100103
+engine: wazuh
+rule_id: 100103
+name: Sudoers file modified
+state: shadow
+response: none
+mitre: [T1548.003]   # evidence: Atomic Red Team T1548.003 #5 (scenario host-sudoers)
+wraps: [550]
+references:
+  - https://attack.mitre.org/techniques/T1548/003/
+  - https://github.com/wazuh/wazuh/blob/v4.14.8/ruleset/rules/0015-ossec_rules.xml
+  - https://github.com/redcanaryco/atomic-red-team/blob/388942adbd9641f4dfdcf079d7efe9a75ec0ac43/atomics/T1548.003/T1548.003.md
+  - https://documentation.wazuh.com/current/user-manual/capabilities/file-integrity/index.html
+tactic: Privilege Escalation
+owner: nguyen-doan-hong-huy
+created: 2026-10-14
+data_source: Wazuh syscheck (FIM) on /etc/sudoers
+description: >
+  /etc/sudoers changed. Granting NOPASSWD or new sudoers entries is a documented way to keep root access. Shadow until
+  the baseline of legitimate administration changes is known.
+expected_fp: Administrator editing sudoers with visudo, configuration management runs.
+tests:
+  - name: sudoers content changed
+    expect: match
+    fim: {path: /etc/sudoers}
+  - name: drop-in directory is a different path
+    expect: no_match
+    fim: {path: /etc/sudoers.d/90-cloud-init-users}
+  - name: other file changed
+    expect: no_match
+    fim: {path: /etc/hosts}

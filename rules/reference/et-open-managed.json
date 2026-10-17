@@ -1,0 +1,56 @@
+{
+ "generated_at": "2026-10-15T02:25:25Z",
+ "kind": "et-open-managed-rules",
+ "license": "sids 2000000-2799999: BSD licence, Copyright (c) 2003-2026 Emerging Threats; see LICENSE in the archive",
+ "rules": {
+  "2009525": {
+   "classtype": "trojan-activity",
+   "enabled_upstream": true,
+   "file": "emerging-malware.rules",
+   "metadata": [
+    "created_at 2010_07_30",
+    "confidence High",
+    "signature_severity Major",
+    "updated_at 2024_04_13"
+   ],
+   "msg": "ET MALWARE Sality - Fake Opera User-Agent",
+   "raw": "alert http $HOME_NET any -> $EXTERNAL_NET any (msg:\"ET MALWARE Sality - Fake Opera User-Agent\"; flow:established,to_server; http.method; content:\"GET\"; http.user_agent; content:\"Opera/8.81 (Windows NT 6.0|3b 20|U|3b 20|en)\"; startswith; endswith; reference:url,www.spywareremove.com/removeTrojanDownloaderSalityG.html; reference:url,www.microsoft.com/security/portal/beta/Threat/Encyclopedia/Entry.aspx?Name=Virus%3AWin32%2FSality.AM; classtype:trojan-activity; sid:2009525; rev:10; metadata:created_at 2010_07_30, confidence High, signature_severity Major, updated_at 2024_04_13;)",
+   "rev": 10
+  },
+  "2009582": {
+   "classtype": "attempted-recon",
+   "enabled_upstream": false,
+   "file": "emerging-scan.rules",
+   "metadata": [
+    "created_at 2010_07_30",
+    "confidence Low",
+    "signature_severity Informational",
+    "updated_at 2019_07_26"
+   ],
+   "msg": "ET SCAN NMAP -sS window 1024",
+   "raw": "alert tcp $EXTERNAL_NET any -> $HOME_NET any (msg:\"ET SCAN NMAP -sS window 1024\"; fragbits:!D; dsize:0; flags:S,12; ack:0; window:1024; threshold: type both, track by_dst, count 1, seconds 60; classtype:attempted-recon; sid:2009582; rev:3; metadata:created_at 2010_07_30, confidence Low, signature_severity Informational, updated_at 2019_07_26;)",
+   "rev": 3
+  },
+  "2034567": {
+   "classtype": "bad-unknown",
+   "enabled_upstream": true,
+   "file": "emerging-hunting.rules",
+   "metadata": [
+    "attack_target Client_Endpoint",
+    "created_at 2021_12_01",
+    "deployment Perimeter",
+    "confidence Medium",
+    "signature_severity Informational",
+    "tag Description_Generated_By_Proofpoint_Nexus",
+    "updated_at 2021_12_01"
+   ],
+   "msg": "ET HUNTING curl User-Agent to Dotted Quad",
+   "raw": "alert http $HOME_NET any -> $EXTERNAL_NET any (msg:\"ET HUNTING curl User-Agent to Dotted Quad\"; flow:established,to_server; http.user_agent; content:\"curl/\"; startswith; nocase; fast_pattern; http.host; pcre:\"/^\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}$/\"; classtype:bad-unknown; sid:2034567; rev:1; metadata:attack_target Client_Endpoint, created_at 2021_12_01, deployment Perimeter, confidence Medium, signature_severity Informational, tag Description_Generated_By_Proofpoint_Nexus, updated_at 2021_12_01;)",
+   "rev": 1
+  }
+ },
+ "source": "https://rules.emergingthreats.net/open/suricata-7.0.3/emerging.rules.tar.gz",
+ "upstream_rule_count": 72138,
+ "upstream_sha256": "58a85bd90610729d26576d4ead776288b45a186ebf5b7babf8ea0404757d96f9",
+ "version": "11311"
+}

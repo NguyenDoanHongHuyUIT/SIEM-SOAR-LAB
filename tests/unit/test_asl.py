@@ -1,0 +1,122 @@
+import json
+import re
+from pathlib import Path
+
+from tools import gen_asl
+
+ASL = json.loads((Path(__file__).resolve().parents[2] / "statemachine" / "case_workflow.asl.json").read_text())
+STATES = ASL["States"]
+
+
+def _targets(state):
+    out = [state.get("Next"), state.get("Default")]
+    out += [c["Next"] for c in state.get("Choices", [])] + [c["Next"] for c in state.get("Catch", [])]
+    return [t for t in out if t]
+
+
+def test_committed_asl_matches_generator():
+    assert gen_asl.render() == (Path(gen_asl.OUT)).read_text(), "run: python -m tools.gen_asl"
+
+
+def test_all_targets_exist_and_all_states_reachable():
+    for name, st in STATES.items():
+        for t in _targets(st):
+            assert t in STATES, f"{name} -> {t}"
+    seen, stack = set(), [ASL["StartAt"]]
+    while stack:
+        n = stack.pop()
+        if n not in seen:
+            seen.add(n)
+            stack.extend(_targets(STATES[n]))
+    assert seen == set(STATES)
+
+
+def test_every_task_has_catch_to_failsafe_or_a_documented_exception():
+    notify_states = {"NotifyExpired", "NotifyIsolated", "NotifyBlocked", "NotifyRestored"}
+    for name, st in STATES.items():
+        if st["Type"] != "Task" or name in {"FailSafe"}:
+            continue
+        assert st.get("Catch"), name
+        if name not in notify_states:
+            assert any(c["Next"] == "FailSafe" or c["Next"] == "MarkExpired" for c in st["Catch"]), name
+
+
+def test_human_gates_have_timeouts_and_task_token():
+    for name in ("NotifyApproval", "WaitRestoreDecision"):
+        st = STATES[name]
+        assert st["Resource"].endswith("waitForTaskToken")
+        assert "TimeoutSecondsPath" in st
+        assert st["Parameters"]["Payload"]["task_token.$"] == "$$.Task.Token"
+    assert any(c["ErrorEquals"] == ["States.Timeout"] and c["Next"] == "MarkExpired"
+               for c in STATES["NotifyApproval"]["Catch"])
+
+
+def test_terminal_states_and_failure_is_visible_to_cloudwatch():
+    ends = {n for n, s in STATES.items() if s["Type"] in {"Succeed", "Fail"}}
+    assert ends == {"DoneAcknowledged", "DoneDismissed", "DoneExpired", "DoneRestored", "CaseFailed"}
+    assert STATES["CaseFailed"]["Type"] == "Fail"  # drives the ExecutionsFailed alarm
+
+
+def test_function_placeholders_match_terraform_template_inputs():
+    used = set(re.findall(r"\$\{(\w+)\}", json.dumps(ASL)))  # fn_* ARNs and table_name
+    tf = (Path(__file__).resolve().parents[2] / "infra/modules/serverless-core/stepfunctions.tf").read_text()
+    provided = set(re.findall(r"^\s+((?:fn_\w+)|table_name)\s+=", tf, re.M))
+    assert used == provided
+
+
+def test_no_task_token_or_secret_in_state_names_or_results():
+    blob = json.dumps(ASL)
+    assert "secret" not in blob.lower() and "password" not in blob.lower()
+
+
+def test_containment_happens_only_after_approval_and_preflight():
+    order = []
+    cur = "Preflight"
+    while cur not in {"VerifyContainment"} and len(order) < 20:
+        order.append(cur)
+        st = STATES[cur]
+        cur = st.get("Next") or st["Choices"][0]["Next"]
+    assert order[:3] == ["Preflight", "SaveState", "PlanChoice"]
+    reach_approve = [c["Next"] for c in STATES["ApprovalChoice"]["Choices"] if c["StringEquals"] == "approve"]
+    assert reach_approve == ["Preflight"]
+
+
+def test_single_call_containment_steps_are_sdk_integrations_not_lambdas():
+    """Managed first (proposal 4.4): one API call = one SDK integration. Guards against moving them back to Lambda."""
+    assert STATES["StopInstance"]["Resource"] == "arn:aws:states:::aws-sdk:ec2:stopInstances"
+    assert STATES["DisableKey"]["Resource"] == "arn:aws:states:::aws-sdk:iam:updateAccessKey"
+    for name in ("StopInstance", "DisableKey"):
+        assert STATES[name]["Retry"] and any(c["Next"] == "FailSafe" for c in STATES[name]["Catch"])
+
+
+def test_dry_run_never_reaches_a_mutating_sdk_call():
+    stop_gate, key_gate = STATES["ShouldStopInstance"], STATES["ShouldDisableKey"]
+    assert {"Variable": "$.config.dry_run", "BooleanEquals": False} in stop_gate["Choices"][0]["And"]
+    assert key_gate["Choices"][0]["Variable"] == "$.config.dry_run" and key_gate["Choices"][0]["BooleanEquals"] is False
+    assert stop_gate["Default"] == "AuditStopSkipped" and key_gate["Default"] == "AuditKeyDisableSkipped"
+
+
+def test_sdk_permissions_are_on_the_state_machine_role_and_scoped():
+    root = Path(__file__).resolve().parents[2] / "infra/modules/serverless-core"
+    sf, lam = (root / "stepfunctions.tf").read_text(), (root / "lambdas.tf").read_text()
+    assert "ec2:StopInstances" in sf and "aws:ResourceTag/siemsoar:zone" in sf
+    assert "iam:UpdateAccessKey" in sf and "${var.iam_target_prefix}*" in sf
+    assert "ec2:StopInstances" not in lam.split("ec2_contain_instance")[1].split("}")[0].replace("# StopInstances", "")
+
+
+def test_sdk_integration_parameters_match_the_aws_api_models():
+    """Every non-Lambda Task must name an existing API with only valid parameters and all required ones."""
+    import botocore.session
+    sess = botocore.session.get_session()
+    checked = 0
+    for name, st in STATES.items():
+        if st["Type"] != "Task" or "lambda" in st["Resource"]:
+            continue
+        tail = st["Resource"].split(":::")[1].split(":")
+        service, action = (tail[1], tail[2]) if tail[0] == "aws-sdk" else (tail[0], tail[1])
+        shape = sess.get_service_model(service).operation_model(action[0].upper() + action[1:]).input_shape
+        given = {k.removesuffix(".$") for k in st["Parameters"]}
+        assert given <= set(shape.members), f"{name}: unknown parameters {given - set(shape.members)}"
+        assert set(shape.required_members) <= given, f"{name}: missing {set(shape.required_members) - given}"
+        checked += 1
+    assert checked == 7

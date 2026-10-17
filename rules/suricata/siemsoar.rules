@@ -1,0 +1,4 @@
+# SIEMSOAR detection-as-code: LOCAL network rules (sids 9000000-9099999), one metadata file each (rules/metadata).
+# Most network detection is managed, not written: Emerging Threats Open rules selected by metadata with
+# `source: et-open` (pinned text in rules/reference/et-open-managed.json). `tools/rulesctl.py build` emits both kinds
+# into the release, plus the Wazuh rule (metadata `wazuh_rule_id`) that carries each rule's lifecycle state.

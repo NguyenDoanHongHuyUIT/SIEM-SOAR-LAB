@@ -1,0 +1,161 @@
+{
+ "_provenance": "pcap rules/pcaps/t1071_001_malicious_user_agents.pcap (Atomic Red Team T1071.001 test 3) replayed by Suricata 7.0 (jasonish/suricata:7.0) with the pinned ET Open 11311 rule 2009525; the EVE alert line sent to the Wazuh 4.14.8 logtest API (official wazuh/wazuh-manager image) with the SIEMSOAR rules built from this repository. Both blocks are verbatim tool output (2026-10-15).",
+ "eve": {
+  "alert": {
+   "action": "allowed",
+   "category": "A Network Trojan was detected",
+   "gid": 1,
+   "metadata": {
+    "confidence": [
+     "High"
+    ],
+    "created_at": [
+     "2010_07_30"
+    ],
+    "signature_severity": [
+     "Major"
+    ],
+    "updated_at": [
+     "2024_04_13"
+    ]
+   },
+   "rev": 10,
+   "severity": 1,
+   "signature": "ET MALWARE Sality - Fake Opera User-Agent",
+   "signature_id": 2009525
+  },
+  "app_proto": "http",
+  "dest_ip": "172.19.0.2",
+  "dest_port": 80,
+  "direction": "to_server",
+  "event_type": "alert",
+  "flow": {
+   "bytes_toclient": 444,
+   "bytes_toserver": 369,
+   "dest_ip": "172.19.0.2",
+   "dest_port": 80,
+   "pkts_toclient": 3,
+   "pkts_toserver": 4,
+   "src_ip": "172.19.0.3",
+   "src_port": 36630,
+   "start": "2026-10-15T02:23:46.060488+0000"
+  },
+  "flow_id": 822746917091085,
+  "http": {
+   "hostname": "172.19.0.2",
+   "http_content_type": "text/html",
+   "http_method": "GET",
+   "http_user_agent": "Opera/8.81 (Windows NT 6.0; U; en)",
+   "length": 0,
+   "protocol": "HTTP/1.1",
+   "status": 200,
+   "url": "/"
+  },
+  "pcap_cnt": 34,
+  "pkt_src": "wire/pcap",
+  "proto": "TCP",
+  "src_ip": "172.19.0.3",
+  "src_port": 36630,
+  "timestamp": "2026-10-15T02:23:46.061103+0000",
+  "tx_id": 0
+ },
+ "wazuh_output": {
+  "agent": {
+   "id": "000",
+   "name": "206aaf7e9517"
+  },
+  "data": {
+   "alert": {
+    "action": "allowed",
+    "category": "A Network Trojan was detected",
+    "gid": "1",
+    "metadata": {
+     "confidence": [
+      "High"
+     ],
+     "created_at": [
+      "2010_07_30"
+     ],
+     "signature_severity": [
+      "Major"
+     ],
+     "updated_at": [
+      "2024_04_13"
+     ]
+    },
+    "rev": "10",
+    "severity": "1",
+    "signature": "ET MALWARE Sality - Fake Opera User-Agent",
+    "signature_id": "2009525"
+   },
+   "app_proto": "http",
+   "dest_ip": "172.19.0.2",
+   "dest_port": "80",
+   "direction": "to_server",
+   "event_type": "alert",
+   "flow": {
+    "bytes_toclient": "444",
+    "bytes_toserver": "369",
+    "dest_ip": "172.19.0.2",
+    "dest_port": "80",
+    "pkts_toclient": "3",
+    "pkts_toserver": "4",
+    "src_ip": "172.19.0.3",
+    "src_port": "36630",
+    "start": "2026-10-15T02:23:46.060488+0000"
+   },
+   "flow_id": "822746917091085.000000",
+   "http": {
+    "hostname": "172.19.0.2",
+    "http_content_type": "text/html",
+    "http_method": "GET",
+    "http_user_agent": "Opera/8.81 (Windows NT 6.0; U; en)",
+    "length": "0",
+    "protocol": "HTTP/1.1",
+    "status": "200",
+    "url": "/"
+   },
+   "pcap_cnt": "34",
+   "pkt_src": "wire/pcap",
+   "proto": "TCP",
+   "src_ip": "172.19.0.3",
+   "src_port": "36630",
+   "timestamp": "2026-10-15T02:23:46.061103+0000",
+   "tx_id": "0"
+  },
+  "decoder": {
+   "name": "json"
+  },
+  "full_log": "{\"timestamp\":\"2026-10-15T02:23:46.061103+0000\",\"flow_id\":822746917091085,\"pcap_cnt\":34,\"event_type\":\"alert\",\"src_ip\":\"172.19.0.3\",\"src_port\":36630,\"dest_ip\":\"172.19.0.2\",\"dest_port\":80,\"proto\":\"TCP\",\"pkt_src\":\"wire/pcap\",\"tx_id\":0,\"alert\":{\"action\":\"allowed\",\"gid\":1,\"signature_id\":2009525,\"rev\":10,\"signature\":\"ET MALWARE Sality - Fake Opera User-Agent\",\"category\":\"A Network Trojan was detected\",\"severity\":1,\"metadata\":{\"confidence\":[\"High\"],\"created_at\":[\"2010_07_30\"],\"signature_severity\":[\"Major\"],\"updated_at\":[\"2024_04_13\"]}},\"http\":{\"hostname\":\"172.19.0.2\",\"url\":\"/\",\"http_user_agent\":\"Opera/8.81 (Windows NT 6.0; U; en)\",\"http_content_type\":\"text/html\",\"http_method\":\"GET\",\"protocol\":\"HTTP/1.1\",\"status\":200,\"length\":0},\"app_proto\":\"http\",\"direction\":\"to_server\",\"flow\":{\"pkts_toserver\":4,\"pkts_toclient\":3,\"bytes_toserver\":369,\"bytes_toclient\":444,\"start\":\"2026-10-15T02:23:46.060488+0000\",\"src_ip\":\"172.19.0.3\",\"dest_ip\":\"172.19.0.2\",\"src_port\":36630,\"dest_port\":80}}",
+  "id": "1792032149.715673",
+  "location": "master->/var/log/suricata/eve.json",
+  "manager": {
+   "name": "206aaf7e9517"
+  },
+  "rule": {
+   "description": "Suricata: ET MALWARE Sality - Fake Opera User-Agent",
+   "firedtimes": 1,
+   "groups": [
+    "siemsoar",
+    "suricata",
+    "siemsoar_shadow",
+    "resp_none"
+   ],
+   "id": "110102",
+   "level": 10,
+   "mail": false,
+   "mitre": {
+    "id": [
+     "T1071.001"
+    ],
+    "tactic": [
+     "Command and Control"
+    ],
+    "technique": [
+     "Web Protocols"
+    ]
+   }
+  },
+  "timestamp": "2026-10-15T02:42:29.099000Z"
+ }
+}

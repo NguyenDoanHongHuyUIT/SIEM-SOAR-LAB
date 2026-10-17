@@ -1,0 +1,9 @@
+# Line endings: committed text is LF. Scripts are uploaded to S3 by Terraform and run by bash on EC2, so a CRLF
+# checkout (Windows autocrlf) must never reach them.
+* text=auto eol=lf
+*.sh text eol=lf
+*.tftpl text eol=lf
+wazuh/integrations/custom-eventbridge text eol=lf
+*.whl binary
+*.gz binary
+*.pcap binary

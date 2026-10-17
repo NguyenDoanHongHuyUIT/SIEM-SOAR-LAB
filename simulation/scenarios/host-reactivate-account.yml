@@ -1,0 +1,19 @@
+id: host-reactivate-account
+title: Valid accounts - lock, expire and reactivate a local account (Atomic Red Team T1078.003 test 9)
+kind: atomic
+target: sensor
+malicious: true
+atomic:
+  technique: T1078.003
+  test_guid: d2b95631-62d7-45a3-aaef-0972cea97931   # useradd art; usermod --lock/--expiredate/--unlock (all in /etc/shadow)
+  ref: 388942adbd9641f4dfdcf079d7efe9a75ec0ac43
+verify:
+  - 'getent passwd art'
+cleanup:
+  - 'userdel -r art 2>/dev/null || userdel art || true'
+expect:
+  - {source: wazuh, rule_id: "100102", case: false}
+  # the atomic first creates the account it then manipulates: these fire too, as a side effect of its set-up step
+  - {source: wazuh, rule_id: "100110", case: false, optional: true}
+  - {source: wazuh, rule_id: "100100", case: false, optional: true}
+settle_seconds: 120

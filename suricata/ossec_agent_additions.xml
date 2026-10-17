@@ -1,0 +1,22 @@
+<!-- BEGIN SIEMSOAR (appended by bootstrap_sensor.sh) -->
+<ossec_config>
+  <!-- Suricata EVE JSON -> Wazuh (decoded by the built-in json/suricata decoders) -->
+  <localfile>
+    <log_format>json</log_format>
+    <location>/var/log/suricata/eve.json</location>
+  </localfile>
+
+  <!-- File integrity monitoring: system files + a lab canary directory (real-time) -->
+  <syscheck>
+    <directories realtime="yes" check_all="yes" report_changes="yes">/srv/lab</directories>
+    <directories realtime="yes" check_all="yes">/etc/passwd,/etc/shadow,/etc/sudoers,/etc/ssh/sshd_config</directories>
+    <!-- persistence through SSH keys (rule 100104): root and the Ubuntu AMI default user -->
+    <directories realtime="yes" check_all="yes">/root/.ssh/authorized_keys,/home/ubuntu/.ssh/authorized_keys</directories>
+    <frequency>3600</frequency>
+  </syscheck>
+
+  <!-- Not repeated here on purpose: the stock Linux agent already reads /var/log/auth.log and /var/log/syslog
+       (etc/templates/config/generic/localfile-logs/syslog-logs.template in Wazuh 4.14). A second <localfile> for the
+       same file would ingest every sshd/useradd line twice and distort frequency rules such as 5712/5763. -->
+</ossec_config>
+<!-- END SIEMSOAR -->

@@ -1,0 +1,3 @@
+# cp backend.hcl.example backend.hcl && edit  (backend.hcl is git-ignored via *.hcl)
+bucket = "siemsoar-tfstate-<ACCOUNT_ID>"
+region = "us-east-1" # same region as infra/bootstrap

@@ -1,0 +1,130 @@
+# SIEMSOAR normalisation and decision policy. Loaded by siemsoar/policy.py (validated at import), shipped inside the
+# Lambda package. Everything an operator may need to change when an input source changes lives here, not in code.
+#
+# Rules for editing this file:
+#   * every value is either a documented fact of the source (`source = <url>`) or an explicit analyst decision
+#     (`basis = "analyst"`). Nothing is a hidden constant of the code.
+#   * ATT&CK ids must exist and not be revoked in rules/reference/attack-enterprise-<v>.json (tests enforce it).
+#   * field paths are dotted paths into the raw alert; the first path that yields a value wins.
+
+version = 1
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Risk score (0-100) used to order work and to decide when a contained instance is also stopped. It is a prioritisation
+# heuristic, not a measurement: tune it with the false-positive feedback (`soarctl feedback` / `rulesctl tune`).
+[risk]
+basis = "analyst"
+severity_weight = 0.6            # share of the source severity (already normalised to 0-100)
+default_criticality = "medium"   # asset tag `criticality` missing or unknown
+repeat_step = 2                  # points per additional merged alert ...
+repeat_cap = 10                  # ... up to this many
+internet_exposed = 10            # instance has a public IPv4 address
+[risk.criticality]
+critical = 20
+high = 15
+medium = 8
+low = 0
+
+[severity]
+basis = "analyst"
+bands = [[80, "critical"], [60, "high"], [40, "medium"], [20, "low"]]   # lower bound (0-100), label; below = "info"
+
+# ---------------------------------------------------------------------------------------------------------------------
+[guardduty]
+# GuardDuty severity is a number from 0 to 8.9; it is scaled linearly to 0-100.
+# source = https://docs.aws.amazon.com/guardduty/latest/ug/guardduty_findings.html
+severity_max = 8.9
+# What a finding can trigger. First matching entry wins. `resource_type` is the finding's resource.resourceType
+# (https://docs.aws.amazon.com/guardduty/latest/APIReference/API_Resource.html). Anything not listed gets no response
+# plan: a human can only Acknowledge it. Extend here when SIEMSOAR learns to contain another resource type.
+[[guardduty.plans]]
+resource_type = "Instance"
+resource_kind = "ec2_instance"
+plan = "ec2_isolate"
+[[guardduty.plans]]
+resource_type = "AccessKey"
+resource_kind = "iam_access_key"
+plan = "iam_key_disable"
+user_types = ["IAMUser"]         # accessKeyDetails.userType: only long-lived IAM user keys can be disabled; roles cannot
+
+# ATT&CK techniques for GuardDuty finding types. GuardDuty itself publishes no ATT&CK mapping. The mapping used is the
+# independent one of MITRE's Center for Threat-Informed Defense (Mappings Explorer / AWS): per technique, the finding
+# types that can indicate it. tools/refdata.py turns the pinned release (commit + SHA-256 recorded in the file) into
+# `mapping_file`, following ATT&CK `revoked-by` links to the pinned ATT&CK version. A finding type CTID does not list gets
+# no technique rather than a guessed one. Regenerate with `python -m tools.refdata guardduty`.
+# https://github.com/center-for-threat-informed-defense/mappings-explorer/tree/main/mappings/aws
+# finding type format: https://docs.aws.amazon.com/guardduty/latest/ug/guardduty_finding-format.html
+[guardduty.mitre]
+mapping_file = "guardduty_attack.json"
+# Local decisions that deliberately differ from CTID go here, one entry each, longest prefix wins, and must say why:
+#   [[guardduty.mitre.overrides]]
+#   prefix = "Recon:EC2/Portscan"
+#   techniques = ["T1046"]
+#   basis = "analyst"
+#   reason = "why CTID's list is not what this deployment wants"
+
+# ---------------------------------------------------------------------------------------------------------------------
+[wazuh]
+# Wazuh rule levels run from 0 to 15; scaled linearly to 0-100.
+# source = https://documentation.wazuh.com/current/user-manual/ruleset/rules/index.html
+level_max = 15
+# Rule group that asks for a response: `resp_<plan>` is injected by tools/rulesctl build from the rule metadata.
+response_group_prefix = "resp_"
+# A Suricata alert reaches us as a Wazuh alert whose rule has the group `suricata` (or whose data is an EVE alert).
+suricata_group = "suricata"
+
+# How an alert's agent becomes the resource to contain, tried in order. `instance_id`: the agent name is an EC2 instance
+# id (what bootstrap_sensor.sh configures). Otherwise the instance is looked up (only if exactly one match): by the
+# agent's private IP, or by the `Name` tag. No unique match -> no response plan (never contain a guess).
+[resolution]
+wazuh_agent = ["instance_id", "private_ip", "name_tag"]
+
+# De-duplication window key: normalised fields hashed together. Alerts with the same key within
+# DEDUP_WINDOW_SECONDS merge into one open case.
+[dedup]
+guardduty = ["rule_id", "resource_id"]
+wazuh = ["rule_id", "resource_id", "src_ip"]
+suricata = ["rule_id", "resource_id", "src_ip"]
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Context copied from the raw alert next to the case (`extra`), so an approver sees what happened. Wazuh turns every
+# number under `data` into a string, so values are coerced by name (ports/ids to int). How each path is checked:
+#   Suricata EVE (data.alert.*, data.http.*) and syscheck: real engine output (tests/fixtures/real_alerts.py, eve_logtest);
+#   sshd (data.srcip, data.srcuser = account that does not exist, data.dstuser = existing one, data.srcport): output of the
+#     real Wazuh 4.14.8 decoder (REAL_SSHD_DATA); useradd (data.dstuser) likewise;
+#   GuardDuty: every path must exist in AWS's own Finding API model shipped in botocore (test_policy.py).
+[entities.wazuh]
+src_ip = ["data.src_ip", "data.srcip", "data.alert.src_ip"]
+dest_ip = ["data.dest_ip", "data.dstip"]
+src_port = ["data.src_port", "data.srcport"]
+dest_port = ["data.dest_port", "data.dstport"]
+proto = ["data.proto"]
+app_proto = ["data.app_proto"]
+user = ["data.dstuser", "data.srcuser", "data.win.eventdata.targetUserName"]
+file_path = ["syscheck.path"]
+file_event = ["syscheck.event"]
+url = ["data.http.url"]
+http_method = ["data.http.http_method"]
+user_agent = ["data.http.http_user_agent"]
+dns_query = ["data.dns.rrname", "data.dns.query.0.rrname"]
+signature_id = ["data.alert.signature_id"]
+alert_category = ["data.alert.category"]
+alert_severity = ["data.alert.severity"]
+flow_id = ["data.flow_id"]
+agent_ip = ["agent.ip"]
+
+[entities.guardduty]
+remote_ip = [
+  "service.action.networkConnectionAction.remoteIpDetails.ipAddressV4",
+  "service.action.awsApiCallAction.remoteIpDetails.ipAddressV4",
+  "service.action.kubernetesApiCallAction.remoteIpDetails.ipAddressV4",
+]
+api_call = ["service.action.awsApiCallAction.api"]
+service_name = ["service.action.awsApiCallAction.serviceName"]
+finding_count = ["service.count"]
+last_seen = ["service.eventLastSeen"]
+
+# Entities that are integers once coerced. NOT flow_id: Wazuh parses JSON numbers as doubles, so a Suricata flow_id above
+# 2^53 reaches us already rounded (observed: "822746917091085.000000"); it is kept as the string Wazuh delivered.
+[entities.integers]
+names = ["src_port", "dest_port", "alert_severity", "signature_id", "finding_count"]

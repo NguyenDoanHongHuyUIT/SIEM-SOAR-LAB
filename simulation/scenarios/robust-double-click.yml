@@ -1,0 +1,8 @@
+id: robust-double-click
+title: Robustness - concurrent approval clicks produce exactly one valid result
+kind: robustness
+trigger: host-useradd        # a real Atomic Red Team detection starts the case: nothing is injected
+check: double_click
+malicious: true
+techniques: []
+settle_seconds: 30

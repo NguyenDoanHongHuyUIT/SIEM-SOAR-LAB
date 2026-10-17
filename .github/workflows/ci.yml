@@ -1,0 +1,176 @@
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: lint + unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check .
+      - name: State machine definition is in sync with its generator
+        run: python -m tools.gen_asl --check
+      - run: pytest
+
+  detection-as-code:
+    name: rules (lint, lifecycle gate, tests on real Suricata)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # lifecycle gate compares with the base branch
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install pyyaml suricata-update
+      - name: Reference snapshots are well formed (ATT&CK + Wazuh ruleset, with upstream hashes)
+        run: python -m tools.refdata check
+      - name: Lint (metadata, ids, MITRE against the pinned ATT&CK snapshot, parents against the pinned Wazuh ruleset)
+        run: python -m tools.rulesctl lint
+      - name: Lifecycle gate (new rules start in shadow; only legal state moves)
+        if: github.event_name == 'pull_request'
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          REVERT=""
+          case "$TITLE" in Revert*) REVERT="--allow-revert" ;; esac
+          python -m tools.rulesctl lifecycle --base "origin/${{ github.base_ref }}" $REVERT
+      - name: Build release (also proves the generated Wazuh/Suricata files parse)
+        run: python -m tools.rulesctl build --out dist --sha "${GITHUB_SHA}"
+      # Same engine line as the lab sensor (ppa:oisf/suricata-7.0, see suricata/bootstrap_sensor.sh): the official
+      # OISF-maintained container, so the runner's apt state and file permissions do not matter
+      - name: "suricata -T and pcap replay (every metadata test - true positives, near-misses, benign traffic)"
+        run: python -m tools.suricata_pcap_test --rules "dist/${GITHUB_SHA}/suricata/siemsoar.rules" --docker-image jasonish/suricata:7.0
+      - name: Coverage report
+        run: python -m tools.rulesctl coverage | tee "$GITHUB_STEP_SUMMARY"
+
+  wazuh-engine:
+    name: rule tests on the real Wazuh engine (analysisd -t, logtest API, FIM queue)
+    runs-on: ubuntu-latest
+    env:
+      # must match infra/modules/lab-ondemand `wazuh_version` (enforced by tests/unit/test_wazuh_logtest.py)
+      WAZUH_VERSION: "4.14.8"
+      WAZUH_API_USER: ci
+      WAZUH_API_PASSWORD: "Ci-Passw0rd.*-9x"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install pyyaml requests suricata-update
+      - name: Build release (generated rules with lifecycle groups injected)
+        run: python -m tools.rulesctl build --out dist --sha "${GITHUB_SHA}"
+      - name: Start the official Wazuh manager image
+        run: |
+          docker run -d --name wazuh -p 55000:55000 \
+            -e API_USERNAME="$WAZUH_API_USER" -e API_PASSWORD="$WAZUH_API_PASSWORD" \
+            "wazuh/wazuh-manager:${WAZUH_VERSION}"
+      - name: Install the generated rules into the manager
+        run: |
+          docker cp "dist/${GITHUB_SHA}/wazuh/siemsoar_rules.xml" wazuh:/var/ossec/etc/rules/siemsoar_rules.xml
+          docker exec wazuh chown root:wazuh /var/ossec/etc/rules/siemsoar_rules.xml
+          docker exec wazuh chmod 660 /var/ossec/etc/rules/siemsoar_rules.xml
+      - name: wazuh-analysisd -t (the same syntax check the host runs at deploy time, now at PR time)
+        run: docker exec wazuh /var/ossec/bin/wazuh-analysisd -t
+      - name: Restart the manager so analysisd loads the rules (FIM events go through analysisd, not logtest)
+        # wazuh-control exits non-zero in the container for daemons it does not run there; what matters is analysisd
+        # the container may still be in its first start: wait for analysisd, restart, wait again (up to 5 min each)
+        run: |
+          up() { for _ in $(seq 1 60); do docker exec wazuh /var/ossec/bin/wazuh-control status 2>/dev/null \
+                   | grep -q "wazuh-analysisd is running" && return 0; sleep 5; done; return 1; }
+          up
+          docker exec wazuh /var/ossec/bin/wazuh-control restart || true
+          up
+      - name: every Wazuh rule test on the real engine (logtest API for logs, analysisd queue for FIM events)
+        run: python -m tools.wazuh_logtest --url https://localhost:55000 --user "$WAZUH_API_USER" --container wazuh --wait 240 --strict
+      - name: Suricata + Wazuh hand-off (real EVE alerts from a real Suricata replay -> logtest -> mapping rule, groups, MITRE)
+        run: |
+          python -m tools.eve_logtest --rules "dist/${GITHUB_SHA}/suricata/siemsoar.rules" --docker-image jasonish/suricata:7.0 \
+            --url https://localhost:55000 --user "$WAZUH_API_USER" --wait 120
+      - if: failure()
+        run: docker logs wazuh | tail -100
+
+  asl-contract:
+    name: state machine on the real Step Functions interpreter (TestState, mocked integrations)
+    # needs OIDC: skipped for forks (no id-token) and when the plan role variable is not configured
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - name: Offline request validation (always)
+        run: pytest tests/contract -q
+      - uses: aws-actions/configure-aws-credentials@v4
+        if: vars.PLAN_ROLE_ARN != ''
+        with:
+          role-to-assume: ${{ vars.PLAN_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: TestState against the service
+        if: vars.PLAN_ROLE_ARN != ''
+        run: RUN_TESTSTATE=1 pytest tests/contract -q
+
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck bootstrap and deploy scripts
+        run: |
+          sudo apt-get install -y shellcheck
+          shellcheck -S warning wazuh/bootstrap_manager.sh suricata/bootstrap_sensor.sh scripts/deploy_rules.sh \
+            wazuh/integrations/custom-eventbridge
+
+  terraform-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.5"
+      - run: terraform fmt -check -recursive infra
+      - name: validate every root module (no backend, no credentials)
+        run: |
+          for dir in infra/bootstrap infra/envs/lab; do
+            terraform -chdir="$dir" init -backend=false -input=false
+            terraform -chdir="$dir" validate
+          done
+      - name: "terraform test (mocked AWS provider - the full configuration must plan, with and without the lab plane)"
+        run: |
+          terraform -chdir=infra/envs/lab init -backend=false -input=false
+          terraform -chdir=infra/envs/lab test
+      # Official Trivy image pinned by digest (the trivy-action installer step broke): report-only, the lab intentionally
+      # uses AdministratorAccess for apply and SSE-S3 instead of customer-managed KMS keys (documented limits)
+      - name: Security scan (Trivy config)
+        run: >-
+          docker run --rm -v "$PWD/infra:/src:ro"
+          aquasec/trivy@sha256:a22415a38938a56c379387a8163fcb0ce38b10ace73e593475d3658d578b2436
+          config --severity HIGH,CRITICAL --exit-code 0 --skip-dirs /src/envs/lab/.terraform --skip-dirs /src/bootstrap/.terraform /src

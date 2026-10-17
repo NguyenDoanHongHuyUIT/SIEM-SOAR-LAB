@@ -1,0 +1,19 @@
+id: host-root-group-user
+title: Persistence - account in the root group with a password (Atomic Red Team T1136.001 test 6)
+kind: atomic
+target: sensor
+malicious: true
+atomic:
+  technique: T1136.001
+  test_guid: a1040a30-d28b-4eda-bd99-bb2861a4616c   # useradd -g 0 ... then chpasswd (Ubuntu branch)
+  args: {username: "siemsoar_r_{short}"}
+  ref: 388942adbd9641f4dfdcf079d7efe9a75ec0ac43
+verify:
+  - 'getent passwd siemsoar_r_{short}'
+cleanup:
+  - 'userdel siemsoar_r_{short} || true'
+expect:
+  - {source: wazuh, rule_id: "100110", case: false}
+  - {source: wazuh, rule_id: "100100", case: false}
+  - {source: wazuh, rule_id: "100102", case: false}   # chpasswd writes the password hash into /etc/shadow
+settle_seconds: 120

@@ -1,0 +1,29 @@
+id: wazuh-100101
+engine: wazuh
+rule_id: 100101
+name: Canary directory changed
+state: shadow
+response: none
+mitre: [T1565.001]
+wraps: [550, 554]   # official Wazuh rules this rule hangs under (checked by lint)
+references:
+  - https://attack.mitre.org/techniques/T1565/001/
+  - https://documentation.wazuh.com/current/user-manual/capabilities/file-integrity/index.html
+tactic: Impact
+owner: nguyen-doan-hong-huy
+created: 2026-10-06
+data_source: Wazuh syscheck (FIM) real-time on /srv/lab
+description: >
+  Canary directory used by the simulation. Starts in shadow to show the lifecycle: the alert is recorded
+  in Wazuh but does not create cases until promoted to active through a pull request.
+expected_fp: Anyone deliberately touching /srv/lab during a session.
+tests:
+  - name: file added
+    expect: match
+    fim: {path: /srv/lab/canary.txt, type: added}
+  - name: file modified
+    expect: match
+    fim: {path: /srv/lab/notes/a.txt}
+  - name: outside canary dir
+    expect: no_match
+    fim: {path: /srv/other/a.txt}

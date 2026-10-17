@@ -1,0 +1,34 @@
+id: wazuh-100104
+engine: wazuh
+rule_id: 100104
+name: SSH authorized_keys modified
+state: shadow
+response: none
+mitre: [T1098.004]   # evidence: Atomic Red Team T1098.004 #1 (scenario host-ssh-authkeys)
+wraps: [550, 554]
+references:
+  - https://attack.mitre.org/techniques/T1098/004/
+  - https://github.com/redcanaryco/atomic-red-team/blob/388942adbd9641f4dfdcf079d7efe9a75ec0ac43/atomics/T1098.004/T1098.004.md
+  - https://github.com/wazuh/wazuh/blob/v4.14.8/ruleset/rules/0015-ossec_rules.xml
+  - https://documentation.wazuh.com/current/user-manual/capabilities/file-integrity/index.html
+tactic: Persistence
+owner: nguyen-doan-hong-huy
+created: 2026-10-15
+data_source: Wazuh syscheck (FIM) on root's and the default user's ~/.ssh/authorized_keys
+description: >
+  An authorized_keys file was created or changed: adding a key there is a documented way to keep SSH access. The
+  monitored files are listed in suricata/ossec_agent_additions.xml. Shadow until the false-positive rate is measured.
+expected_fp: Key rotation by an administrator, cloud-init writing the instance key at first boot.
+tests:
+  - name: root authorized_keys changed
+    expect: match
+    fim: {path: /root/.ssh/authorized_keys}
+  - name: default user authorized_keys changed
+    expect: match
+    fim: {path: /home/ubuntu/.ssh/authorized_keys}
+  - name: known_hosts is not a key grant
+    expect: no_match
+    fim: {path: /root/.ssh/known_hosts}
+  - name: a backup copy of the file
+    expect: no_match
+    fim: {path: /root/.ssh/authorized_keys.bak}

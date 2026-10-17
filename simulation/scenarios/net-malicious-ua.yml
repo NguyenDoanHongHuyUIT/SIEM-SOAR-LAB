@@ -1,0 +1,12 @@
+id: net-malicious-ua
+title: Command and control - HTTP beacons with malware user agents (Atomic Red Team T1071.001 test 3)
+kind: atomic
+target: sensor
+malicious: true
+atomic:
+  technique: T1071.001
+  test_guid: 2d7c471a-e887-4b78-b0dc-b0df1f2e0658   # curl -A <four malware user agents> www.google.com
+  ref: 388942adbd9641f4dfdcf079d7efe9a75ec0ac43
+expect:
+  - {source: suricata, rule_id: "110102", case: false}   # ET MALWARE Sality - Fake Opera User-Agent (managed, shadow)
+settle_seconds: 120

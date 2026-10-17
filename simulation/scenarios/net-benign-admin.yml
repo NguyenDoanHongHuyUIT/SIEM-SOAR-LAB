@@ -1,0 +1,12 @@
+id: net-benign-admin
+title: Benign - routine HTTP from the lab host (metadata service, a public site, package index)
+kind: ssm_shell
+target: sensor
+malicious: false
+commands:
+  - 'curl -s -m5 -o /dev/null http://169.254.169.254/latest/meta-data/ || true'   # what cloud tooling does on every EC2
+  - 'curl -s -m5 -o /dev/null http://www.example.com/'
+  - 'apt-get update -qq'
+expect:                   # the managed ET HUNTING rule fires on curl to an IP (the metadata service): a known false positive
+  - {source: suricata, rule_id: "110103", case: false, false_positive: true}
+settle_seconds: 120

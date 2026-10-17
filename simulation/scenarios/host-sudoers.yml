@@ -1,0 +1,18 @@
+id: host-sudoers
+title: Privilege escalation - weaken sudo caching in /etc/sudoers (Atomic Red Team T1548.003 test 5)
+kind: atomic
+target: sensor
+malicious: true
+atomic:
+  technique: T1548.003
+  test_guid: 91a60b03-fb75-4d24-a42e-2eb8956e8de1   # appends "Defaults !tty_tickets", then visudo -c
+  ref: 388942adbd9641f4dfdcf079d7efe9a75ec0ac43
+prepare:                  # the atomic has no cleanup of its own: keep a byte-exact copy to put back
+  - 'cp -p /etc/sudoers /var/tmp/sudoers.siemsoar.bak'
+verify:
+  - 'grep -q "^Defaults !tty_tickets" /etc/sudoers'
+cleanup:
+  - 'cp -p /var/tmp/sudoers.siemsoar.bak /etc/sudoers && rm -f /var/tmp/sudoers.siemsoar.bak && visudo -cf /etc/sudoers'
+expect:
+  - {source: wazuh, rule_id: "100103", case: false}
+settle_seconds: 120

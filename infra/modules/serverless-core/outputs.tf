@@ -1,4 +1,11 @@
 output "evidence_bucket" { value = aws_s3_bucket.evidence.bucket }
+output "logs_bucket" { value = aws_s3_bucket.logs.bucket }
+output "logs_bucket_arn" { value = aws_s3_bucket.logs.arn }
+output "rules_bucket" { value = aws_s3_bucket.rules.bucket }
+output "rules_bucket_arn" { value = aws_s3_bucket.rules.arn }
 output "cases_table" { value = aws_dynamodb_table.cases.name }
 output "notify_topic_arn" { value = aws_sns_topic.notify.arn }
 output "state_machine_arn" { value = aws_sfn_state_machine.case.arn }
+output "slack_interaction_url" { value = "${aws_apigatewayv2_api.slack.api_endpoint}/slack/interact" }
+output "default_event_bus_arn" { value = "arn:aws:events:${local.region}:${local.account_id}:event-bus/default" }
+output "name_prefix" { value = var.name_prefix }
