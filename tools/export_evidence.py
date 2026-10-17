@@ -32,8 +32,8 @@ def export(prefix: str, out: Path) -> dict:
     cases = store.list_cases()
     for c in cases:
         c["audit"] = store.list_audit(c["case_id"])
-    (out / "cases.json").write_text(json.dumps(cases, indent=2, default=str))
-    (out / "runs.json").write_text(json.dumps(store.list_runs(), indent=2, default=str))
+    (out / "cases.json").write_text(json.dumps(cases, indent=2, default=str), encoding="utf-8")
+    (out / "runs.json").write_text(json.dumps(store.list_runs(), indent=2, default=str), encoding="utf-8")
 
     s3, copied = aws.client("s3"), 0
     for bucket, prefix_key in ((f"{prefix}-evidence-{account}", ""), (f"{prefix}-rules-{account}", "releases/")):
@@ -44,14 +44,14 @@ def export(prefix: str, out: Path) -> dict:
                 target.write_bytes(s3.get_object(Bucket=bucket, Key=obj["Key"])["Body"].read())
                 copied += 1
 
-    deployments = [json.loads(p.read_text()) for p in (out / "s3").rglob("deployment.json")]
-    (out / "deployments.json").write_text(json.dumps(deployments, indent=2))
+    deployments = [json.loads(p.read_text(encoding="utf-8")) for p in (out / "s3").rglob("deployment.json")]
+    (out / "deployments.json").write_text(json.dumps(deployments, indent=2), encoding="utf-8")
 
     manifest = {"exported_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"), "account": account,
                 "cases": len(cases), "s3_objects": copied,
                 "files": {p.relative_to(out).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
                           for p in sorted(out.rglob("*")) if p.is_file() and p.name != "MANIFEST.json"}}
-    (out / "MANIFEST.json").write_text(json.dumps(manifest, indent=2))
+    (out / "MANIFEST.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     return manifest
 
 

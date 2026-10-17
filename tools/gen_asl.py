@@ -167,11 +167,11 @@ def render() -> str:
 def main(argv: list[str]) -> int:
     text = render()
     if "--check" in argv:
-        if not OUT.exists() or OUT.read_text() != text:
+        if not OUT.exists() or OUT.read_text(encoding="utf-8") != text:
             print(f"{OUT} is stale: run `python -m tools.gen_asl`", file=sys.stderr)
             return 1
         return 0
-    OUT.write_text(text)
+    OUT.write_text(text, encoding="utf-8")
     print(f"wrote {OUT}")
     return 0
 

@@ -79,11 +79,14 @@ def lab_instances(run_events: list[dict]) -> dict[str, str]:
     return out
 
 
-def build_sessions(run_events: list[dict], start_events: list[dict], stop_events: list[dict]) -> list[dict]:
+def build_sessions(run_events: list[dict], start_events: list[dict], stop_events: list[dict],
+                   now: datetime | None = None) -> list[dict]:
     """Lab sessions: from the first instance start to the last instance stop that follows it.
 
     The creation (RunInstances) counts as the first start. Overlapping instance runs are merged, because the manager and
     the sensor start and stop together and only wall-clock time is billable once. `types` lists every lab instance type.
+    A session still running at `now` is reported up to `now` with `open: true` (it used to be dropped: the first real
+    report showed 0 lab hours while the lab was up).
     """
     types = lab_instances(run_events)
     points: list[tuple[datetime, str, str]] = []
@@ -107,14 +110,17 @@ def build_sessions(run_events: list[dict], start_events: list[dict], stop_events
             running.discard(iid)
             if not running and opened is not None:
                 sessions.append({"start": opened, "end": when, "hours": round((when - opened).total_seconds() / 3600, 3),
-                                 "types": sorted(set(types.values()))})
+                                 "types": sorted(set(types.values())), "open": False})
                 opened = None
+    if opened is not None and now is not None and now > opened:
+        sessions.append({"start": opened, "end": now, "hours": round((now - opened).total_seconds() / 3600, 3),
+                         "types": sorted(set(types.values())), "open": True})
     return sessions
 
 
 def sessions_from_cloudtrail(ct, start: datetime, end: datetime) -> list[dict]:
     return build_sessions(lookup(ct, "RunInstances", start, end), lookup(ct, "StartInstances", start, end),
-                          lookup(ct, "StopInstances", start, end))
+                          lookup(ct, "StopInstances", start, end), now=end)
 
 
 # --------------------------------------------------------------------------- cost

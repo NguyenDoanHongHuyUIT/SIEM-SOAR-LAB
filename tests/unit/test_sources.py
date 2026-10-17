@@ -31,6 +31,15 @@ def power_event(when, name, *iids):
 
 
 # ------------------------------------------------------------------ sessions
+def test_a_session_still_running_is_reported_up_to_now():
+    run = [{"eventTime": "2026-10-17T16:30:00Z", "responseElements": {"instancesSet": {"items": [
+        {"instanceId": "i-1"}]}}, "requestParameters": {"instanceType": "t3.small", "tagSpecificationSet": {"items": [
+            {"resourceType": "instance", "tags": [{"key": "siemsoar:plane", "value": "ondemand"}]}]}}}]
+    s = src.build_sessions(run, [], [], now=datetime(2026, 10, 17, 18, 30, tzinfo=UTC))
+    assert len(s) == 1 and s[0]["open"] and s[0]["hours"] == 2.0
+    assert src.build_sessions(run, [], []) == []  # without `now` an open session has no end
+
+
 def test_sessions_are_wall_clock_from_first_start_to_last_stop_of_the_lab_instances():
     runs = [run_event(t(9), [("i-mgr", "t3.large")]), run_event(t(9), [("i-sen", "t3.small")]),
             run_event(t(9), [("i-other", "m5.large")], lab=False)]
