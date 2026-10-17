@@ -25,7 +25,8 @@ data "aws_iam_policy_document" "plan_trust" {
     condition {
       test     = "StringEquals"
       variable = local.sub_key
-      values   = ["repo:${var.github_repo}:pull_request"]
+      # pull requests (terraform plan, TestState) and pushes to main (the ci workflow's TestState job); read-only role
+      values = ["repo:${var.github_repo}:pull_request", "repo:${var.github_repo}:ref:refs/heads/main"]
     }
   }
 }

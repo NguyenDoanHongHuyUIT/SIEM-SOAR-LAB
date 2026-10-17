@@ -271,3 +271,22 @@ def test_every_guardduty_entity_path_exists_in_the_aws_finding_model():
         for path in paths:
             assert _gd_shape_has(path), f"entities.guardduty.{name}: `{path}` is not a field of the GuardDuty Finding"
     assert not _gd_shape_has("service.action.networkConnectionAction.remoteIpDetails.noSuchField")
+
+
+def test_every_guardduty_finding_a_scenario_expects_passes_the_eventbridge_threshold():
+    """A scenario expecting a case for a finding whose documented severity band is below the EventBridge filter can
+    never pass (Stealth:IAMUser/CloudTrailLoggingDisabled is Low: it was dropped at the old threshold of 4)."""
+    import re
+    from pathlib import Path
+
+    from simulation import catalog
+    from tools import refdata
+    tf = (Path(__file__).resolve().parents[2] / "infra/modules/serverless-core/variables.tf").read_text()
+    threshold = float(re.search(r'variable "min_guardduty_severity" \{.*?default\s*=\s*([\d.]+)', tf, re.S).group(1))
+    lowest = {"Low": 1.0, "Medium": 4.0, "High": 7.0, "Critical": 9.0}  # GuardDuty severity bands (AWS docs)
+    catalogue = refdata.load_finding_types()["active"]
+    for sid, s in catalog.load_scenarios().items():
+        for e in s.get("expect", []):
+            if e["source"] == "guardduty" and e.get("case", True):
+                band = catalogue[e["rule_id"]]["severity"].rstrip(" *")
+                assert lowest[band] >= threshold, f"{sid}: {e['rule_id']} is {band}, below the threshold {threshold}"

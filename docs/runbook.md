@@ -10,7 +10,7 @@ terraform init && terraform apply -var github_repo=<user>/SIEM-SOAR-LAB
 terraform output github_variables
 ```
 Trong GitHub → Settings:
-* **Variables** (repository): `TFSTATE_BUCKET, PLAN_ROLE_ARN, APPLY_ROLE_ARN, RULES_ROLE_ARN, ALERT_EMAIL`; tùy chọn `SLACK_CHANNEL`, `DRY_RUN` (mặc định `true`), `ENABLE_FAULT_INJECTION` (mặc định `false`).
+* **Variables** (repository): `TFSTATE_BUCKET, PLAN_ROLE_ARN, APPLY_ROLE_ARN, RULES_ROLE_ARN`, tùy chọn `AWS_REGION` (mặc định `us-east-1`); **secret** `ALERT_EMAIL` (log Actions của repo public ai cũng xem được); tùy chọn `SLACK_CHANNEL`, `DRY_RUN` (mặc định `true`), `ENABLE_FAULT_INJECTION` (mặc định `false`).
 * **Environments**: `lab` và `lab-rules`, bật *Required reviewers* (đây là chốt phê duyệt trước khi apply/deploy).
 * Local: `cp infra/envs/lab/backend.hcl.example infra/envs/lab/backend.hcl` và sửa tên bucket.
 

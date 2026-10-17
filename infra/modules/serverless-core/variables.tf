@@ -62,8 +62,12 @@ variable "iam_target_prefix" {
 }
 
 variable "min_guardduty_severity" {
-  type        = number
-  default     = 4
+  type    = number
+  default = 1
+  # GuardDuty severity bands (AWS docs): Low 1.0-3.9, Medium 4.0-6.9, High 7.0-8.9. Several findings the lab relies on
+  # are Low, e.g. Stealth:IAMUser/CloudTrailLoggingDisabled (the Stratus scenario) and the sample findings; a threshold
+  # of 4 silently dropped them before they reached the SOAR. A single-tenant lab account takes every finding (the risk
+  # score and the human gate still order and filter the work). tests/unit/test_policy.py checks expected findings.
   description = "GuardDuty findings below this severity never become cases."
 }
 

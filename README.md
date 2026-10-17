@@ -72,7 +72,7 @@ make install && make all          # lint + ASL + test + rules + terraform valida
 Triển khai thật (chi tiết từng bước, kể cả tạo Slack App: [docs/runbook.md](docs/runbook.md)):
 
 1. `infra/bootstrap` → `terraform apply -var github_repo=<user>/SIEM-SOAR-LAB` (chạy local một lần).
-2. Tạo GitHub **variables**: `TFSTATE_BUCKET, PLAN_ROLE_ARN, APPLY_ROLE_ARN, RULES_ROLE_ARN, ALERT_EMAIL`, và **environments** `lab`, `lab-rules` (bật required reviewers).
+2. Tạo GitHub **variables** `TFSTATE_BUCKET, PLAN_ROLE_ARN, APPLY_ROLE_ARN, RULES_ROLE_ARN` (+ `AWS_REGION` nếu khác us-east-1), **secret** `ALERT_EMAIL`, và **environments** `lab`, `lab-rules` (bật required reviewers).
 3. Merge → workflow `terraform` apply. Mặc định `dry_run=true`: workflow chạy trọn vẹn nhưng chưa thay đổi EC2/IAM.
 4. Đặt secret Slack vào SSM (không qua Terraform state), xác nhận email SNS.
 5. Actions → **lab-session** → `up` (bật Wazuh + EC2 lab, tự tắt sau N giờ).
