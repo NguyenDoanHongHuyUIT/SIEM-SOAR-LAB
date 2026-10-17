@@ -2,7 +2,7 @@ id: wazuh-100110
 engine: wazuh
 rule_id: 100110
 name: New local user account
-state: shadow
+state: active
 response: ec2_isolate
 mitre: [T1136.001]
 wraps: [5902]   # official Wazuh rules this rule hangs under (checked by lint)
