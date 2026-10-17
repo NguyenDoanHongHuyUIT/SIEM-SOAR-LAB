@@ -94,9 +94,13 @@ jobs:
         run: docker exec wazuh /var/ossec/bin/wazuh-analysisd -t
       - name: Restart the manager so analysisd loads the rules (FIM events go through analysisd, not logtest)
         # wazuh-control exits non-zero in the container for daemons it does not run there; what matters is analysisd
+        # the container may still be in its first start: wait for analysisd, restart, wait again (up to 5 min each)
         run: |
+          up() { for _ in $(seq 1 60); do docker exec wazuh /var/ossec/bin/wazuh-control status 2>/dev/null \
+                   | grep -q "wazuh-analysisd is running" && return 0; sleep 5; done; return 1; }
+          up
           docker exec wazuh /var/ossec/bin/wazuh-control restart || true
-          docker exec wazuh /var/ossec/bin/wazuh-control status | grep "wazuh-analysisd is running"
+          up
       - name: every Wazuh rule test on the real engine (logtest API for logs, analysisd queue for FIM events)
         run: python -m tools.wazuh_logtest --url https://localhost:55000 --user "$WAZUH_API_USER" --container wazuh --wait 240 --strict
       - name: Suricata + Wazuh hand-off (real EVE alerts from a real Suricata replay -> logtest -> mapping rule, groups, MITRE)
