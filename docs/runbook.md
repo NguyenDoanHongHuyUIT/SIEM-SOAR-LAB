@@ -48,11 +48,20 @@ python -m tools.soarctl lab status | extend --hours 2 | down
 Kết thúc: `lab-session → down` (hủy hẳn) — hoặc timer chỉ *stop* instance nếu bạn quên.
 
 ## 5. Chạy lần đầu an toàn (checklist)
-1. `dry_run=true` (mặc định). Chạy `python -m simulation.runner run host-useradd` (Atomic Red Team T1136.001 nguyên bản) → Wazuh rule 100110 bắn, case xuất hiện, Slack gửi thẻ, bấm **Approve** (nếu plan là `none` thì **Acknowledge**).
-2. `python -m simulation.runner run aws-guardduty-sample` → case từ GuardDuty (tài nguyên mẫu không tồn tại → chỉ cần Acknowledge).
-3. `python -m simulation.runner run host-useradd` với `dry_run=true` → xem workflow đi hết, SG **chưa** đổi.
-4. Đặt `DRY_RUN=false` (GitHub variable) → apply → lặp lại: SG cô lập thật, snapshot thật, restore xác minh thật.
-5. `python -m simulation.runner run-all` (robustness cần `ENABLE_FAULT_INJECTION=true` ở lần apply đó, rồi tắt lại).
+Mọi rule vào repo ở **shadow** (đề cương 5.3: rule mới chỉ ghi nhận alert, không tạo case). Vì vậy phiên đầu là phiên **đo**:
+1. `dry_run=true` (mặc định). `python -m simulation.runner run-all --kind atomic --kind ssm_shell` → các test Atomic và
+   kịch bản lành tính chạy trên máy lab; runner đọc alert SIEM của từng lượt. Chưa có case Wazuh (rule đang shadow).
+2. `python -m simulation.runner run aws-guardduty-sample` → case từ GuardDuty (tài nguyên mẫu không tồn tại → chỉ cần
+   Acknowledge): kiểm đường EventBridge → case → Slack/email.
+3. `python -m evaluation.evaluate` → bảng **tầng phát hiện**: TP/FN của từng rule shadow và FP đo được từ kịch bản lành tính.
+4. **Promote bằng PR riêng** (kịch bản vòng đời rule): `python -m tools.rulesctl promote wazuh-100110 active` (lệnh tự cập
+   nhật cờ `case` trong các kịch bản), mở PR kèm số liệu bước 3, merge → **rules-deploy**.
+5. `python -m simulation.runner run host-useradd` (vẫn `dry_run=true`) → case, Slack gửi thẻ, **Approve** → workflow đi hết,
+   SG **chưa** đổi.
+6. Đặt `DRY_RUN=false` → apply → lặp lại: SG cô lập thật (máy vẫn gửi log về Wazuh qua cổng 1514), snapshot thật, restore
+   xác minh thật.
+7. Robustness (`robust-*`, cần rule đã active và `ENABLE_FAULT_INJECTION=true` ở lần apply đó, rồi tắt lại).
+8. Rollback để minh họa: `git revert` PR promote → merge → rule về shadow.
 
 Trước khi chạy `aws-stratus-cloudtrail-stop`, đặt `SIEMSOAR_LAB_ACCOUNT_ID` thành account ID lab đã được duyệt và xác nhận AWS credentials hiện tại trỏ đúng account (cần binary `stratus`). Runner từ chối account không khớp. Trình tự: `stratus warmup` bằng credential của người vận hành (Stratus tự tạo trail `stratus-red-team-*`), runner xóa key cũ và tạo access key mới cho IAM user vùng simulation (`SIEMSOAR_SIM_USER`, mặc định `lab-victim`, chỉ được `cloudtrail:StopLogging` trên trail của Stratus), `stratus detonate` bằng key đó, rồi `stratus cleanup` bằng credential người vận hành. GuardDuty sinh `Stealth:IAMUser/CloudTrailLoggingDisabled` trỏ tới key của `lab-victim` → case với plan `iam_key_disable`.
 

@@ -321,8 +321,9 @@ class Runner:
         """
         scenario = load_scenarios()[trigger]
         wanted = [e for e in scenario.get("expect", []) if e.get("case", True) and not e.get("optional")]
-        if not wanted:
-            raise RuntimeError(f"trigger scenario {trigger} does not expect a case")
+        if not wanted:  # e.g. its rules are still in shadow: robustness needs an active rule (promote it first)
+            raise RuntimeError(f"trigger scenario {trigger} expects no case: promote its rule to active first "
+                               f"(python -m tools.rulesctl promote wazuh-100110 active)")
         since = datetime.now(UTC) - timedelta(seconds=5)
         getattr(self, f"exec_{scenario['kind']}")(scenario, run_id)
         deadline = time.time() + int(scenario.get("settle_seconds", 120)) + 120

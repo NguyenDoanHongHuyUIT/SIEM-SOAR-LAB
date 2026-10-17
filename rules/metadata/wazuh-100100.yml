@@ -2,7 +2,7 @@ id: wazuh-100100
 engine: wazuh
 rule_id: 100100
 name: Critical account file modified
-state: active
+state: shadow
 response: ec2_isolate
 mitre: [T1136.001]
 wraps: [550]   # official Wazuh rules this rule hangs under (checked by lint)

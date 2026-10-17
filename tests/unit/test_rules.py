@@ -22,6 +22,16 @@ def test_every_rule_has_positive_and_negative_tests_that_a_real_engine_can_run()
 
 
 # ------------------------------------------------------------------ lint negative cases (on a scratch ruleset)
+@pytest.fixture(autouse=True)
+def scenario_copy(tmp_path, monkeypatch):
+    """Every test works on a copy of the scenarios: promote/sync_scenarios must never rewrite the repository's files."""
+    from simulation import catalog
+    copy = tmp_path / "scenarios-copy"
+    shutil.copytree(ROOT / "simulation" / "scenarios", copy)
+    monkeypatch.setattr(catalog, "SCENARIO_DIR", copy)
+    return copy
+
+
 @pytest.fixture
 def scratch(tmp_path):
     shutil.copytree(ROOT / "rules", tmp_path / "rules")
@@ -140,13 +150,14 @@ def test_build_injects_lifecycle_groups_and_manifest(tmp_path):
     manifest = rulesctl.build(tmp_path, "deadbee", commit_time="2026-10-06T10:00:00+00:00")
     xml = (tmp_path / "deadbee" / "wazuh" / "siemsoar_rules.xml").read_text()
     rules = rulesctl.parse_wazuh_xml(xml)
-    assert "siemsoar_active" in " ".join(rules[100100].groups) and "resp_ec2_isolate" in " ".join(rules[100100].groups)
+    # first import: every rule enters in shadow (lifecycle gate); the response plan is still carried for later
+    assert "siemsoar_shadow" in " ".join(rules[100100].groups) and "resp_ec2_isolate" in " ".join(rules[100100].groups)
     assert "siemsoar_shadow" in " ".join(rules[100101].groups)
     assert 110101 in rules and "siemsoar_shadow" in " ".join(rules[110101].groups)  # generated suricata mapping rule
     mapping = rules[110101].element
     assert mapping.findtext("if_sid") == "86601" and mapping.findtext("field") == "^2009582$"
     assert rules[110103].element.find("mitre") is None  # no technique claimed -> no empty <mitre/>
-    assert manifest["summary"] == {"shadow": 9, "active": 2, "enforce": 0, "deprecated": 0}
+    assert manifest["summary"] == {"shadow": 11, "active": 0, "enforce": 0, "deprecated": 0}
     assert manifest["commit_time"].startswith("2026") and manifest["et_open_version"]
     suri = (tmp_path / "deadbee" / "suricata" / "siemsoar.rules").read_text()
     assert 'msg:"ET SCAN NMAP -sS window 1024"' in suri and not any(
@@ -164,7 +175,7 @@ def _drop_expectations(monkeypatch, tmp_path, *rule_ids: str):
     from simulation import catalog
     out = tmp_path / "scenarios"
     out.mkdir()
-    for f in (ROOT / "simulation" / "scenarios").glob("*.yml"):
+    for f in catalog.SCENARIO_DIR.glob("*.yml"):
         doc = yaml.safe_load(f.read_text(encoding="utf-8"))
         doc["expect"] = [e for e in doc.get("expect", []) if str(e["rule_id"]) not in rule_ids]
         (out / f.name).write_text(yaml.safe_dump(doc), encoding="utf-8")
@@ -201,15 +212,19 @@ def test_enforce_becomes_drop_only_when_allowed(scratch, tmp_path, monkeypatch):
 
 
 # ------------------------------------------------------------------ promote / lifecycle / coverage / tune
-def test_promote_changes_only_state_line(scratch, monkeypatch):
+def test_promote_changes_only_state_line_and_keeps_scenarios_consistent(scratch, monkeypatch, scenario_copy):
     monkeypatch.setattr(rulesctl, "RULES", scratch)
-    path = scratch / "metadata" / "wazuh-100101.yml"
+    path = scratch / "metadata" / "wazuh-100110.yml"
     before = path.read_text()
-    msg = rulesctl.promote("wazuh-100101", "active")
+    msg = rulesctl.promote("wazuh-100110", "active")
     after = path.read_text()
-    assert msg == "wazuh-100101: shadow -> active"
+    assert msg.startswith("wazuh-100110: shadow -> active (scenario expectations updated: ")
     diff = [(a, b) for a, b in zip(before.splitlines(), after.splitlines(), strict=True) if a != b]
     assert diff == [("state: shadow", "state: active")]
+    useradd = (scenario_copy / "host-useradd.yml").read_text()
+    assert 'rule_id: "100110", case: true}' in useradd and 'rule_id: "100100", case: false}' in useradd
+    assert rulesctl.lint(scratch) == []  # promotion leaves rules and scenarios consistent: no hand edits needed
+    assert (ROOT / "simulation/scenarios/host-useradd.yml").read_text().count('"100110", case: false') == 1
 
 
 def test_promote_rejects_illegal_jump(scratch, monkeypatch):
@@ -245,12 +260,17 @@ def test_lifecycle_gate_against_git_base(tmp_path):
         rc.ROOT, rc.RULES = orig_root, orig_rules
 
 
-def test_coverage_counts_only_active_and_enforce():
+def test_coverage_counts_only_active_and_enforce(scratch, monkeypatch):
+    monkeypatch.setattr(rulesctl, "RULES", scratch)
+    assert rulesctl.coverage()["techniques"] == {}  # first import: everything is in shadow
+    rulesctl.promote("wazuh-100110", "active")
     cov = rulesctl.coverage()
-    assert "T1136.001" in cov["techniques"] and "T1110" not in cov["techniques"]  # 100120/100121 are shadow
+    assert cov["techniques"] == {"T1136.001": ["wazuh-100110"]}  # 100120/100121 etc. are still shadow
 
 
-def test_tune_suggestions():
+def test_tune_suggestions(scratch, monkeypatch):
+    monkeypatch.setattr(rulesctl, "RULES", scratch)
+    rulesctl.promote("wazuh-100100", "active")
     out = rulesctl.tune({"100100": {"cases": 4, "false_positive": 3}, "100101": {"cases": 5, "false_positive": 0},
                          "9999999": {"cases": 1, "false_positive": 1}})
     assert any("demote" in s and "100100" in s for s in out)

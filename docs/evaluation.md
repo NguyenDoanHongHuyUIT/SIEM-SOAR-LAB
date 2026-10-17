@@ -55,7 +55,7 @@ Baseline = GuardDuty gửi email mặc định + người tự cách ly bằng A
 ## Tiêu chí thành công (6.4) ↔ kiểm tra
 | Tiêu chí | Kiểm tra |
 |---|---|
-| Kịch bản được phát hiện và xử lý end-to-end | `host-useradd`, `host-root-group-user` (case + cách ly EC2), `aws-stratus-cloudtrail-stop` (case + vô hiệu key IAM) PASS |
+| Kịch bản được phát hiện và xử lý end-to-end | `aws-stratus-cloudtrail-stop` (case + vô hiệu key IAM) ngay từ đầu; `host-useradd`, `host-root-group-user` (case + cách ly EC2) sau khi promote 100110/100100 lên active |
 | Rule lifecycle shadow/active/rollback | rule shadow (100102-100104, 100120/100121, ET 110101-110103) có alert nhưng không case; promote `rulesctl promote suricata-2009525 active` khi `detection_quality` cho thấy TP mà không FP, rollback bằng `git revert` |
 | Phê duyệt chỉ một kết quả hợp lệ | `robust-double-click`; test `test_slack_endpoint_happy_path_and_double_click` |
 | Isolation và restore có xác minh | `verify` bằng API; `restore.validate` (hash evidence, drift, alert mới) |

@@ -24,6 +24,7 @@ env:
 
 jobs:
   deploy:
+    if: vars.RULES_ROLE_ARN != '' # nothing to deploy to before infra/bootstrap
     runs-on: ubuntu-latest
     environment: lab-rules
     steps:

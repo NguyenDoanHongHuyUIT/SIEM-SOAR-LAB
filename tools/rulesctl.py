@@ -486,7 +486,26 @@ def promote(rule_id: str, state: str) -> str:
         raise SystemExit(f"illegal move {old} -> {state}; allowed: {sorted(FREEZE.get(old, []))}")
     path = Path(meta[rule_id]["_path"])
     path.write_text(re.sub(r"(?m)^state:\s*\S+", f"state: {state}", path.read_text(), count=1))
-    return f"{rule_id}: {old} -> {state}"
+    changed = sync_scenarios(meta[rule_id], state)
+    return f"{rule_id}: {old} -> {state}" + (f" (scenario expectations updated: {', '.join(changed)})" if changed else "")
+
+
+def sync_scenarios(m: dict, state: str, directory: Path | None = None) -> list[str]:
+    """After a state change, a scenario expecting this rule must expect a case exactly when the rule is active/enforce.
+    Only the `case:` flag on that rule's expectation lines is rewritten (comments and layout are kept)."""
+    rid = str(m["wazuh_rule_id"] if m["engine"] == "suricata" else m["rule_id"])
+    source = m["engine"]
+    want = "true" if state in ("active", "enforce") else "false"
+    line_re = re.compile(rf'^(\s*-\s*\{{[^}}]*source:\s*{source}\b[^}}]*rule_id:\s*"?{rid}"?[^}}]*case:\s*)(true|false)',
+                         re.M)
+    changed = []
+    for path in sorted((directory or catalog.SCENARIO_DIR).glob("*.yml")):
+        text = path.read_text(encoding="utf-8")
+        new = line_re.sub(lambda mt: mt.group(1) + want, text)
+        if new != text:
+            path.write_text(new, encoding="utf-8", newline="\n")
+            changed.append(path.stem)
+    return changed
 
 
 def coverage(states=("active", "enforce")) -> dict:

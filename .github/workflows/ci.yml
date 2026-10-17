@@ -95,6 +95,8 @@ jobs:
           docker exec wazuh chmod 660 /var/ossec/etc/rules/siemsoar_rules.xml
       - name: wazuh-analysisd -t (the same syntax check the host runs at deploy time, now at PR time)
         run: docker exec wazuh /var/ossec/bin/wazuh-analysisd -t
+      - name: Restart the manager so analysisd loads the rules (FIM events go through analysisd, not logtest)
+        run: docker exec wazuh /var/ossec/bin/wazuh-control restart
       - name: every Wazuh rule test on the real engine (logtest API for logs, analysisd queue for FIM events)
         run: python -m tools.wazuh_logtest --url https://localhost:55000 --user "$WAZUH_API_USER" --container wazuh --wait 240 --strict
       - name: Suricata + Wazuh hand-off (real EVE alerts from a real Suricata replay -> logtest -> mapping rule, groups, MITRE)
@@ -165,7 +167,7 @@ jobs:
           terraform -chdir=infra/envs/lab init -backend=false -input=false
           terraform -chdir=infra/envs/lab test
       - name: Security scan (Trivy config)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1, pinned by commit (tags can be moved)
         with:
           scan-type: config
           scan-ref: infra

@@ -115,13 +115,25 @@ sock.send(("8:syscheck:" + json.dumps({"type": "event", "data": data})).encode()
 end = time.time() + 20
 while time.time() < end:
     time.sleep(0.5)
-    with open(alerts_file) as fh:
-        fh.seek(offset)
-        for line in fh:
+    try:
+        with open(alerts_file, "rb") as fh:
+            fh.seek(offset)
+            chunk = fh.read()
+    except FileNotFoundError:
+        continue
+    # analysisd may be half-way through writing an alert: only consume complete lines, re-read the rest next time
+    complete, newline, _ = chunk.rpartition(b"\n")
+    if not newline:
+        continue
+    offset += len(complete) + 1
+    for line in complete.split(b"\n"):
+        try:
             alert = json.loads(line)
-            if alert.get("syscheck", {}).get("path") == path:
-                print(alert["rule"]["id"])
-                sys.exit(0)
+        except ValueError:
+            continue
+        if alert.get("syscheck", {}).get("path") == path:
+            print(alert["rule"]["id"])
+            sys.exit(0)
 sys.exit(3)
 """
 

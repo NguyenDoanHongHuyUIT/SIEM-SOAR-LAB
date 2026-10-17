@@ -305,8 +305,6 @@ def test_soarctl_list_show_decide_feedback(store, sfn, capsys, monkeypatch):
     assert soarctl.main(["decide", cid, "--gate", "approval", "--decision", "dismiss"]) == 1  # rejected: already handled
     stats = soarctl.feedback_stats(store)
     assert stats["UnauthorizedAccess:EC2/SSHBruteForce"] == {"cases": 1, "false_positive": 1}
-    suggestions = rulesctl.tune({"100100": {"cases": 3, "false_positive": 3}})
-    assert suggestions and "demote" in suggestions[0]
 
 
 # ------------------------------------------------------------------ fault injection seam
@@ -552,10 +550,12 @@ def test_runner_closes_benign_cases_with_the_ground_truth_actor(monkeypatch):
 
 
 def test_robustness_scenarios_open_their_case_through_a_real_detection():
+    # the trigger is a public attack procedure; it opens a case once its rule is promoted to active (the runner
+    # refuses to start otherwise, see Runner._open_case_via)
     for s in runner.load_scenarios().values():
         if s["kind"] == "robustness":
             trigger = runner.load_scenarios()[s["trigger"]]
-            assert trigger["kind"] in {"atomic", "ssm_shell"} and any(e.get("case", True) for e in trigger["expect"])
+            assert trigger["kind"] == "atomic" and any(e["source"] == "wazuh" for e in trigger["expect"])
     assert not hasattr(runner.Runner, "_inject_finding")  # no fabricated findings
 
 
