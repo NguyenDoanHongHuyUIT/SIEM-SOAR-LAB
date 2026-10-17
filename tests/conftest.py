@@ -6,6 +6,11 @@ import pytest
 from botocore.exceptions import ClientError
 from moto import mock_aws
 
+# Real credentials/region as the process received them, before the test defaults below replace them. Tests marked
+# `real_aws` (the TestState contract tests, RUN_TESTSTATE=1) get these back and run without moto.
+_REAL_AWS = {k: os.environ.get(k) for k in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+                                            "AWS_DEFAULT_REGION", "AWS_REGION", "AWS_PROFILE")}
+
 os.environ.update({
     "AWS_ACCESS_KEY_ID": "testing", "AWS_SECRET_ACCESS_KEY": "testing", "AWS_SESSION_TOKEN": "testing",
     "AWS_DEFAULT_REGION": "ap-southeast-1", "AWS_REGION": "ap-southeast-1",
@@ -32,8 +37,16 @@ def _table(ddb):
 
 
 @pytest.fixture(autouse=True)
-def aws_env():
+def aws_env(request, monkeypatch):
     from siemsoar import aws, ssm
+    if request.node.get_closest_marker("real_aws"):
+        for key, value in _REAL_AWS.items():
+            if value is None:
+                monkeypatch.delenv(key, raising=False)
+            else:
+                monkeypatch.setenv(key, value)
+        yield
+        return
     with mock_aws():
         aws.reset()
         ssm.clear()

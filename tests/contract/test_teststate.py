@@ -65,7 +65,7 @@ CASES = [
     ("plan-iam", "PlanChoice", _state(steps={"enrich": {"out": {"plan_type": "iam_key_disable"}}}), {},
      "SUCCEEDED", "ShouldDisableKey"),
     ("approve", "ApprovalChoice", _state(approval={"decision": "approve"}), {}, "SUCCEEDED", "Preflight"),
-    ("dismiss", "ApprovalChoice", _state(approval={"decision": "dismiss"}), {}, "SUCCEEDED", "RecordFeedbackDismiss"),
+    ("dismiss", "ApprovalChoice", _state(approval={"decision": "dismiss"}), {}, "SUCCEEDED", "DoneDismissed"),
     ("unknown-decision-fails-safe", "ApprovalChoice", _state(approval={"decision": "???"}), {}, "SUCCEEDED", "FailSafe"),
     ("human-gate-answer", "NotifyApproval", _state(config={"approval_timeout": 60}),
      {"mock": {"result": json.dumps({"decision": "approve"})}, "context": json.dumps({"Task": {"Token": "tok"}})},
@@ -97,11 +97,13 @@ def test_requests_match_the_teststate_api_model(case):
     assert state in json.loads(req["definition"])["States"]
 
 
+@pytest.mark.real_aws
 @pytest.mark.skipif(not os.environ.get("RUN_TESTSTATE"), reason="set RUN_TESTSTATE=1 (needs AWS credentials with states:TestState)")
 @pytest.mark.parametrize("case", CASES, ids=[c[0] for c in CASES])
 def test_state_behaves_as_designed_on_the_real_service(case):
     _, state, payload, extra, status, next_state = case
-    res = boto3.client("stepfunctions", region_name=REGION).test_state(**_request(state, payload, extra))
+    region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")  # the real one (real_aws marker)
+    res = boto3.client("stepfunctions", region_name=region).test_state(**_request(state, payload, extra))
     assert res["status"] == status, res
     if next_state:
         assert res.get("nextState") == next_state, res

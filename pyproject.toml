@@ -8,6 +8,7 @@ requires-python = ">=3.12"
 pythonpath = ["src/lambdas", "."]
 testpaths = ["tests"]
 addopts = "-q"
+markers = ["real_aws: runs against the real AWS API with the caller's credentials (no moto)"]
 
 [tool.ruff]
 line-length = 130
