@@ -11,3 +11,9 @@ variable "name_prefix" {
   type    = string
   default = "siemsoar"
 }
+
+variable "github_repo_ids" {
+  type        = string
+  default     = ""
+  description = "owner@<owner_id>/repo@<repo_id> as GitHub puts it in the OIDC sub claim (gh api repos/<owner>/<repo>)"
+}

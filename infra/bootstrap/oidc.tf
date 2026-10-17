@@ -7,6 +7,10 @@ locals {
   oidc_arn = aws_iam_openid_connect_provider.github.arn
   sub_key  = "token.actions.githubusercontent.com:sub"
   aud_key  = "token.actions.githubusercontent.com:aud"
+  # GitHub now issues `sub` with immutable ids: repo:<owner>@<owner_id>/<repo>@<repo_id>:<context> (observed in
+  # CloudTrail for this repository). The ids stop a re-created repository with the same name from inheriting the roles.
+  # The name-only form is kept for repositories that still receive it.
+  subject_repos = compact(["repo:${var.github_repo}", var.github_repo_ids == "" ? "" : "repo:${var.github_repo_ids}"])
 }
 
 # ---- Role PLAN: chỉ đọc, cho pull request ----
@@ -26,7 +30,7 @@ data "aws_iam_policy_document" "plan_trust" {
       test     = "StringEquals"
       variable = local.sub_key
       # pull requests (terraform plan, TestState) and pushes to main (the ci workflow's TestState job); read-only role
-      values = ["repo:${var.github_repo}:pull_request", "repo:${var.github_repo}:ref:refs/heads/main"]
+      values = flatten([for r in local.subject_repos : ["${r}:pull_request", "${r}:ref:refs/heads/main"]])
     }
   }
 }
@@ -83,7 +87,7 @@ data "aws_iam_policy_document" "apply_trust" {
     condition {
       test     = "StringEquals"
       variable = local.sub_key
-      values   = ["repo:${var.github_repo}:environment:lab"]
+      values   = [for r in local.subject_repos : "${r}:environment:lab"]
     }
   }
 }
@@ -116,7 +120,7 @@ data "aws_iam_policy_document" "rules_trust" {
     condition {
       test     = "StringEquals"
       variable = local.sub_key
-      values   = ["repo:${var.github_repo}:environment:lab-rules"]
+      values   = [for r in local.subject_repos : "${r}:environment:lab-rules"]
     }
   }
 }
