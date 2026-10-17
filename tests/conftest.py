@@ -37,15 +37,19 @@ def _table(ddb):
 
 
 @pytest.fixture(autouse=True)
-def aws_env(request, monkeypatch):
+def aws_env(request):
+    # no `monkeypatch` here: it would be torn down after this fixture, i.e. after aws.reset(), while tests may still
+    # have aws.client patched
     from siemsoar import aws, ssm
     if request.node.get_closest_marker("real_aws"):
+        saved = {k: os.environ.get(k) for k in _REAL_AWS}
         for key, value in _REAL_AWS.items():
-            if value is None:
-                monkeypatch.delenv(key, raising=False)
-            else:
-                monkeypatch.setenv(key, value)
-        yield
+            os.environ.pop(key, None) if value is None else os.environ.__setitem__(key, value)
+        try:
+            yield
+        finally:
+            for key, value in saved.items():
+                os.environ.pop(key, None) if value is None else os.environ.__setitem__(key, value)
         return
     with mock_aws():
         aws.reset()
