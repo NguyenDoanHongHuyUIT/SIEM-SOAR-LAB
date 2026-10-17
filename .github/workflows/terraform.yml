@@ -31,6 +31,10 @@ env:
   TF_VAR_dry_run: ${{ vars.DRY_RUN || 'true' }}
   TF_VAR_enable_fault_injection: ${{ vars.ENABLE_FAULT_INJECTION || 'false' }}
 
+defaults:
+  run:
+    shell: bash # = bash -eo pipefail: a failure before `| tee` fails the step (it was silently green)
+
 jobs:
   plan:
     # no AWS role yet (before infra/bootstrap): skip instead of failing every PR

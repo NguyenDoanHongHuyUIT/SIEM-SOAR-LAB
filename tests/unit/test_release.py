@@ -125,3 +125,14 @@ def test_export_evidence_bundles_cases_and_hashes(store, sfn, tmp_path, env):
     for rel, digest in manifest["files"].items():
         assert hashlib.sha256((out / rel).read_bytes()).hexdigest() == digest
     assert (out / "runs.json").exists() and (out / "deployments.json").exists()
+
+
+def test_every_workflow_runs_bash_with_pipefail():
+    """`run:` without a shell is `bash -e` (no pipefail): `python -m tools.release publish | tee` reported success while
+    publish had failed with AccessDenied. `shell: bash` makes GitHub run `bash -eo pipefail`."""
+    from pathlib import Path
+
+    import yaml
+    for path in sorted((Path(__file__).resolve().parents[2] / ".github/workflows").glob("*.yml")):
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assert (doc.get("defaults") or {}).get("run", {}).get("shell") == "bash", path.name

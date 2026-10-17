@@ -11,6 +11,10 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+defaults:
+  run:
+    shell: bash # = bash -eo pipefail: a failure before `| tee` fails the step (it was silently green)
+
 jobs:
   python:
     name: lint + unit tests
