@@ -94,3 +94,24 @@ def test_ci_engine_version_matches_the_version_deployed_by_terraform():
     ci = (ROOT / ".github/workflows/ci.yml").read_text()
     tested = re.search(r'WAZUH_VERSION:\s*"?([0-9.]+)"?', ci).group(1)
     assert tested == deployed or tested.startswith(deployed + "."), (tested, deployed)
+
+
+def test_the_manager_installer_url_uses_the_minor_version_line():
+    """The lab pins wazuh_version = "4.14"; the installer lives at packages.wazuh.com/4.14/. `${V%.*}` turned "4.14"
+    into "4" (HTTP 403 on the first AWS deployment)."""
+    import re
+    import shutil
+    import subprocess
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    script = (root / "wazuh/bootstrap_manager.sh").read_text()
+    line = next(x for x in script.splitlines() if x.strip().startswith("MINOR="))
+    tf = (root / "infra/modules/lab-ondemand/variables.tf").read_text()
+    default = re.search(r'variable "wazuh_version".*?default\s*=\s*"([\d.]+)"', tf, re.S).group(1)
+    bash = shutil.which("bash")
+    if bash is None:
+        return
+    for version in (default, "4.14", "4.14.8"):
+        out = subprocess.run([bash, "-c", f'WAZUH_VERSION={version}; {line.strip()}; echo "$MINOR"'],
+                             capture_output=True, text=True, check=True).stdout.strip()
+        assert out == "4.14" if version.startswith("4.14") else out.count(".") == 1
