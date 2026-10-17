@@ -6,12 +6,15 @@
     <location>/var/log/suricata/eve.json</location>
   </localfile>
 
-  <!-- File integrity monitoring: system files + a lab canary directory (real-time) -->
+  <!-- File integrity monitoring (real-time). Watch the DIRECTORIES and restrict to the files: useradd, usermod, chpasswd
+       and visudo write a new file and rename it over the old one, so a real-time watch on the file itself only sees
+       the first change (measured on the lab and reproduced on wazuh-manager 4.14.8: 1 alert for 3 changes). -->
   <syscheck>
     <directories realtime="yes" check_all="yes" report_changes="yes">/srv/lab</directories>
-    <directories realtime="yes" check_all="yes">/etc/passwd,/etc/shadow,/etc/sudoers,/etc/ssh/sshd_config</directories>
+    <directories realtime="yes" check_all="yes" recursion_level="0" restrict="^/etc/passwd$|^/etc/shadow$|^/etc/sudoers$">/etc</directories>
+    <directories realtime="yes" check_all="yes" recursion_level="0" restrict="^/etc/ssh/sshd_config$">/etc/ssh</directories>
     <!-- persistence through SSH keys (rule 100104): root and the Ubuntu AMI default user -->
-    <directories realtime="yes" check_all="yes">/root/.ssh/authorized_keys,/home/ubuntu/.ssh/authorized_keys</directories>
+    <directories realtime="yes" check_all="yes" recursion_level="0" restrict="/authorized_keys$">/root/.ssh,/home/ubuntu/.ssh</directories>
     <frequency>3600</frequency>
   </syscheck>
 

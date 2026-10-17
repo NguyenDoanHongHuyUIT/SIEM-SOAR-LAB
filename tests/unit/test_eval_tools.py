@@ -574,6 +574,13 @@ ART_TEST = {"name": "SSH Credential Stuffing From Linux", "supported_platforms":
                                                     "ssh #{target_host}"}}
 
 
+@pytest.mark.skipif(not hasattr(__import__("os"), "killpg"), reason="process groups: Linux lab hosts / CI only")
+def test_run_atomic_kills_a_test_that_outlives_its_timeout():
+    from scripts import run_atomic
+    out = run_atomic._shell("bash", "echo started; sleep 30 & sleep 30", 1)
+    assert out.timed_out and out.returncode is None and "started" in out.stdout
+
+
 def test_run_atomic_renders_inputs_and_the_atomics_path(tmp_path):
     from scripts import run_atomic
     text = run_atomic.render(ART_TEST["executor"]["command"], ART_TEST, {"target_host": "10.0.1.5"}, tmp_path)

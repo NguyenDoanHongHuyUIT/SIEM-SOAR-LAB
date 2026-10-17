@@ -14,6 +14,8 @@
   records an execution error, never a false negative. The bootstrap installs the tools the lab's atomics need.
 * The exit code of the test command is reported, not judged: Atomic tests often end with a command that returns
   non-zero on purpose (nc to a closed port). Whether the behaviour happened is checked by the scenario's `verify`.
+* A test that is still running at --timeout is killed with its whole process group and reported `timed_out`, as
+  Invoke-AtomicTest does (T1046 test 2 ends with `nc` to a port that never closes the connection).
 
 Used by simulation/runner.py (scenario kind `atomic`) through SSM. Needs python3 + PyYAML (python3-yaml).
 """
@@ -24,9 +26,11 @@ import argparse
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 
 ART_CACHE = Path(os.environ.get("ART_DIR", "/opt/atomic-red-team/atomics")).parent
@@ -84,11 +88,26 @@ def ensure_sources(text: str, ref: str, root: Path) -> list[str]:
     return fetched
 
 
-def _shell(executor: str, command: str, timeout: int) -> subprocess.CompletedProcess:
+@dataclass
+class Outcome:
+    returncode: int | None
+    stdout: str
+    stderr: str
+    timed_out: bool = False
+
+
+def _shell(executor: str, command: str, timeout: int) -> Outcome:
     if executor not in EXECUTORS:
         raise ValueError(f"executor {executor!r} is not supported on Linux lab hosts")
-    return subprocess.run([*EXECUTORS[executor], command], capture_output=True, text=True, timeout=timeout,
-                          check=False, stdin=subprocess.DEVNULL)
+    proc = subprocess.Popen([*EXECUTORS[executor], command], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            stdin=subprocess.DEVNULL, text=True, start_new_session=True)
+    try:
+        out, err = proc.communicate(timeout=timeout)
+        return Outcome(proc.returncode, out, err)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGKILL)  # the shell and everything it started (nc, telnet, ...)
+        out, err = proc.communicate()
+        return Outcome(None, out, err, timed_out=True)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -138,7 +157,8 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(report))
             return 0
     result = _shell(executor["name"], render(command, test, inputs, atomics), args.timeout)
-    report.update(exit_code=result.returncode, stdout_tail=result.stdout[-400:], stderr_tail=result.stderr[-400:])
+    report.update(exit_code=result.returncode, timed_out=getattr(result, "timed_out", False),
+                  stdout_tail=result.stdout[-400:], stderr_tail=result.stderr[-400:])
     print(json.dumps(report))
     return 0
 

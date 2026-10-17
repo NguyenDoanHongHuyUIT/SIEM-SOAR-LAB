@@ -54,9 +54,9 @@ apt-get update -y
 WAZUH_MANAGER="$MANAGER_IP" WAZUH_AGENT_NAME="$INSTANCE_ID" apt-get install -y "wazuh-agent=${WAZUH_VERSION}.*"
 apt-mark hold wazuh-agent
 
-if ! grep -q "BEGIN SIEMSOAR" /var/ossec/etc/ossec.conf; then
-  cat "$BOOT/suricata/ossec_agent_additions.xml" >> /var/ossec/etc/ossec.conf
-fi
+# Replace (not skip) the SIEMSOAR block, so re-running this script applies a changed agent configuration
+sed -i '/<!-- BEGIN SIEMSOAR/,/<!-- END SIEMSOAR -->/d' /var/ossec/etc/ossec.conf
+cat "$BOOT/suricata/ossec_agent_additions.xml" >> /var/ossec/etc/ossec.conf
 mkdir -p /srv/lab && touch /srv/lab/canary.txt   # FIM canary used by the simulation scenarios
 systemctl daemon-reload
 systemctl enable --now wazuh-agent
