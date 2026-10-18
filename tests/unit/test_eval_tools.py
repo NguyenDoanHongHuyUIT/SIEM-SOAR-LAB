@@ -647,3 +647,12 @@ def test_known_false_positives_are_declared_only_for_benign_runs_and_still_count
     case = _case(1, rule="100110", resource_id="i-0abc1234def567890", created="2026-10-06T14:00:30.000Z")
     m = ev.compute_metrics([case], [run], {})
     assert m["rule_quality"]["100110"]["fp"] == 1 and m["detection_quality"]["rules"]["100110"]["fp"] == 1
+
+
+def test_the_runner_knows_every_resource_name_the_terraform_module_gives_the_lambdas():
+    import re
+    from pathlib import Path
+    env = runner.resource_env("siemsoar", "314019368810")
+    assert env["EVIDENCE_BUCKET"] == "siemsoar-evidence-314019368810"
+    s3 = (Path(__file__).resolve().parents[2] / "infra/modules/serverless-core/s3.tf").read_text(encoding="utf-8")
+    assert re.search(r'bucket\s*=\s*"\$\{var\.name_prefix\}-evidence-\$\{local\.account_id\}"', s3)
