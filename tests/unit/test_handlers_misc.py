@@ -179,3 +179,23 @@ def test_injected_slack_fault_uses_sns_fallback(store, sfn, monkeypatch):
     cid = ingest_handler.handler(ev.guardduty_instance())["case_id"]
     out = notify.handler({"op": "request", "gate": "approval", "task_token": "T", "state": {"case_id": cid, "config": {}}})
     assert out == {"slack": False, "sns": True} and not called
+
+
+def test_the_decision_card_is_closed_whatever_channel_decided(store, sfn, monkeypatch):
+    """A card that keeps its buttons after a CLI/SNS-fallback decision invites a click that can only be rejected."""
+    import boto3
+    from handlers import notify
+    from siemsoar import decisions, slack
+    ssm = boto3.client("ssm", region_name="ap-southeast-1")
+    for name, value in (("bot_token", "xoxb-test"), ("channel", "C0TEST")):
+        ssm.put_parameter(Name=f"/siemsoar/slack/{name}", Value=value, Type="String", Overwrite=True)
+    monkeypatch.setattr(slack, "post_message", lambda *a, **k: {"ok": True, "channel": "C0TEST", "ts": "171.5"})
+    updates = []
+    monkeypatch.setattr(slack, "update_message", lambda token, ch, ts, text, blocks: updates.append((ch, ts, text)))
+    cid = ingest_handler.handler(ev.guardduty_instance())["case_id"]
+    sent = notify.handler({"op": "request", "gate": "approval", "task_token": "TOK",
+                           "state": {"case_id": cid, "config": {"approval_timeout": 60}}})
+    assert sent == {"slack": True, "sns": True}  # the card reference is stored on the case, not in the result
+    assert store.get_case(cid)["slack_card"] == {"gate": "approval", "channel": "C0TEST", "ts": "171.5"}
+    decisions.apply_decision(store, cid, "approval", "dismiss", actor="cli:U0APPROVER", channel="cli")
+    assert updates == [("C0TEST", "171.5", "*dismiss* by `cli:U0APPROVER` via cli")]

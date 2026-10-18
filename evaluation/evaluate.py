@@ -261,6 +261,19 @@ def baseline_comparison(baseline: list[dict], containment: dict, soar_steps: lis
                     "Compare it with `seconds_to_notice` + approval latency, not as a pure speed-up."}
 
 
+def in_scope(cases: list[dict], runs: list[dict], since: str | None) -> tuple[list[dict], list[dict]]:
+    """Cases created and runs started at or after `since` (ISO time). A system change (e.g. a detection fix) starts a
+    new measurement period: mixing runs of two versions would blame the fixed system for the old one's misses."""
+    if not since:
+        return cases, runs
+    start = parse_iso(since)
+    if start is None:
+        raise ValueError(f"--since must be an ISO timestamp, got {since!r}")
+    keep_c = [c for c in cases if (t := parse_iso(c.get("created_at"))) and t >= start]
+    keep_r = [r for r in runs if (t := parse_iso(r.get("started_at"))) and t >= start]
+    return keep_c, keep_r
+
+
 def compute_metrics(cases: list[dict], runs: list[dict], rules_meta: dict | None = None,
                     baseline: list[dict] | None = None, deployments: list[dict] | None = None,
                     cost: dict | None = None) -> dict:
@@ -287,6 +300,8 @@ def compute_metrics(cases: list[dict], runs: list[dict], rules_meta: dict | None
             lead.append((b - a).total_seconds())
     return {
         "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "scope": {"rules_releases": sorted({r["rules_release"] for r in runs if r.get("rules_release")}),
+                  "first_run": min((r["started_at"] for r in runs if r.get("started_at")), default=None)},
         "counts": {"cases": len(cases), "excluded_cases": len(cases) - len(measured_cases), "invalid_runs": cls["invalid_runs"],
                "alerts": total_alerts, "runs": len(runs),
                    "by_status": {s: sum(1 for c in cases if c["status"] == s) for s in sorted({c["status"] for c in cases})}},
@@ -311,7 +326,8 @@ def compute_metrics(cases: list[dict], runs: list[dict], rules_meta: dict | None
         "operating_cost": cost or {"available": False, "note": "no cost data: run without --offline so that "
                                    "CloudTrail, the Pricing API and Cost Explorer can be queried"},
         "baseline_comparison": baseline_comparison(
-            baseline or [], containment, [manual_steps(c) for c in cases if c.get("containment_seconds") is not None]),
+            baseline or [], containment, [manual_steps(c) for c in cases if c.get("containment_seconds") is not None
+                                       and not c.get("decided_by_assistant")]),  # not a human decision
     }
 
 
@@ -342,7 +358,10 @@ def _render_cost(oc: dict) -> list[str]:
 
 
 def render_markdown(m: dict) -> str:
+    scope = m.get("scope") or {}
     L = ["# Báo cáo đánh giá SIEM/SOAR lab", f"_Sinh lúc {m['generated_at']}_", "",
+         f"- Phạm vi: các lượt chạy từ {scope.get('since') or scope.get('first_run') or '-'}; bản phát hành rule: "
+         f"{', '.join(s[:8] for s in scope.get('rules_releases', [])) or 'không ghi nhận'}",
          f"- Cases: **{m['counts']['cases']}**, alerts gộp vào: **{m['counts']['alerts']}**, "
          f"lượt mô phỏng: **{m['counts']['runs']}**",
          f"- Trạng thái: {json.dumps(m['counts']['by_status'])}", "", "## Độ trễ phát hiện (Detection latency per source)", "",
@@ -478,6 +497,7 @@ def main(argv: list[str] | None = None) -> int:
                     help="optional stopwatch drills; without it the baseline is measured from CloudTrail")
     ap.add_argument("--days", type=int, default=30, help="how far back CloudTrail/Cost Explorer are queried (max 90)")
     ap.add_argument("--offline", nargs=2, metavar=("CASES_JSON", "RUNS_JSON"))
+    ap.add_argument("--since", help="only cases/runs from this ISO time on (start of a measurement period)")
     args = ap.parse_args(argv)
 
     from tools import rulesctl
@@ -512,7 +532,9 @@ def main(argv: list[str] | None = None) -> int:
             if "error" in measured:
                 print(f"warning: baseline from CloudTrail unavailable: {measured['error']}", file=sys.stderr)
             baseline = measured.get("rows", [])
+    cases, runs = in_scope(cases, runs, args.since)
     m = compute_metrics(cases, runs, rulesctl.load_metadata(), baseline, deployments, cost)
+    m["scope"]["since"] = args.since
     out = Path(args.out) / datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     out.mkdir(parents=True, exist_ok=True)
     (out / "metrics.json").write_text(json.dumps(m, indent=2, default=str), encoding="utf-8")

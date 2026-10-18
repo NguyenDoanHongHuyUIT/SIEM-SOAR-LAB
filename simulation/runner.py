@@ -150,6 +150,14 @@ class Runner:
             raise SystemExit(f"no running instance with siemsoar:role={role}; start the lab: soarctl lab up")
         return ids[0]
 
+    def rules_release(self) -> str | None:
+        """The rule release deployed on the lab (releases/current.json): every run is measured against one version."""
+        try:
+            body = self.aws.client("s3").get_object(Bucket=self.rules_bucket, Key="releases/current.json")["Body"]
+            return json.loads(body.read()).get("sha")
+        except Exception:  # noqa: BLE001 - informative only
+            return None
+
     def private_ip(self, role: str) -> str:
         from siemsoar import response
         return response.describe_instance(self.instance(role))["private_ip"]
@@ -413,6 +421,7 @@ class Runner:
                "canary": bool(s.get("canary")), "evaluation_scope": s.get("evaluation_scope", "detection"),
                "techniques": s.get("techniques") or [], "technique_source": s.get("technique_source"),
                "evidence": bool(s.get("evidence")), "expect": s.get("expect", []),
+               "rules_release": None if self.dry_run else self.rules_release(),
                "started_at": started.strftime("%Y-%m-%dT%H:%M:%S.%fZ")[:-4] + "Z"}
         if self.dry_run:
             plan = {k: v for k, v in s.items() if k != "_file"}

@@ -48,6 +48,9 @@ def handler(event, context=None):
                     raise
         case = store.get_case(case["case_id"])
         sent = notify_case(case, gate, gate=gate)
+        card = sent.pop("card", None)
+        if card:
+            store.update_case(case["case_id"], slack_card=card)
         store.audit(case["case_id"], f"notified:{gate}", "system", sent)
         return sent
     kind = event["kind"]

@@ -122,6 +122,14 @@ def post_message(bot_token: str, channel: str, text: str, blocks: list[dict]) ->
     return out
 
 
+def update_message(bot_token: str, channel: str, ts: str, text: str, blocks: list[dict]) -> dict:
+    out = _request("https://slack.com/api/chat.update", {"channel": channel, "ts": ts, "text": text, "blocks": blocks},
+                   {"Authorization": f"Bearer {bot_token}", "Content-Type": "application/json; charset=utf-8"})
+    if not out.get("ok"):
+        raise RuntimeError(f"slack api error: {out.get('error')}")
+    return out
+
+
 def respond(response_url: str, text: str, blocks: list[dict]) -> None:
     """Replace the original card after a decision (best effort)."""
     if not response_url.startswith("https://hooks.slack.com/"):
