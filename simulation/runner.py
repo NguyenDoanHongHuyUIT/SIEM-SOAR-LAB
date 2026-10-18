@@ -130,6 +130,12 @@ def observe_expectations(expect: list[dict], alerts: list[dict]) -> dict[str, bo
             for e in expect if e["source"] in ("wazuh", "suricata") and e.get("siem_alert", True)}
 
 
+def resource_env(prefix: str, account: str) -> dict[str, str]:
+    """Names the Lambdas get from Terraform and the runner needs too (it reads evidence after a robustness test).
+    Without EVIDENCE_BUCKET the mid-failure recovery could not read pre_action_state and left the host isolated."""
+    return {"NAME_PREFIX": prefix, "CASES_TABLE": f"{prefix}-cases", "EVIDENCE_BUCKET": f"{prefix}-evidence-{account}"}
+
+
 class Runner:
     def __init__(self, prefix: str = "siemsoar", dry_run: bool = False, wait: bool = True):
         os.environ.setdefault("NAME_PREFIX", prefix)
@@ -139,6 +145,8 @@ class Runner:
         self.aws, self.prefix, self.dry_run, self.wait = aws, prefix, dry_run, wait
         self.store = CaseStore()
         account = aws.client("sts").get_caller_identity()["Account"]
+        for key, value in resource_env(prefix, account).items():
+            os.environ.setdefault(key, value)
         self.rules_bucket = f"{prefix}-rules-{account}"
         self.log = lambda msg: print(f"[{datetime.now(UTC):%H:%M:%S}] {msg}", flush=True)
 

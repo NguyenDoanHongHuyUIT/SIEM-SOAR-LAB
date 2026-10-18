@@ -114,6 +114,13 @@ data "aws_iam_policy_document" "victim" {
     actions   = ["cloudtrail:StopLogging", "cloudtrail:GetTrailStatus"]
     resources = ["arn:aws:cloudtrail:${local.region}:${local.account_id}:trail/stratus-red-team-*"]
   }
+  # Stratus checks "authenticated against AWS, and a region set" with ec2:DescribeAccountAttributes before detonating
+  # (seen in CloudTrail: without it every victim detonation stopped at that check). Read-only, no resource-level ARN.
+  statement {
+    sid       = "StratusPreflight"
+    actions   = ["ec2:DescribeAccountAttributes"]
+    resources = ["*"]
+  }
 }
 
 resource "aws_iam_user_policy" "victim" {
