@@ -454,6 +454,19 @@ def test_stratus_requires_the_expected_aws_account_and_successful_cleanup(monkey
     assert [command[1] for command in calls[-2:]] == ["detonate", "cleanup"]
 
 
+def test_the_victim_policy_allows_the_stratus_preflight_and_only_stratus_trails():
+    """Stratus' auth check is ec2:DescribeAccountAttributes (CloudTrail of a failed lab run): without it the victim key
+    never reaches StopLogging. Anything beyond that read and the Stratus trails would widen the simulation zone."""
+    import re
+    from pathlib import Path
+    tf = (Path(__file__).resolve().parents[2] / "infra/modules/lab-ondemand/iam.tf").read_text()
+    doc = re.search(r'data "aws_iam_policy_document" "victim" \{(.*?)\n\}', tf, re.S).group(1)
+    statements = dict(re.findall(r'actions\s+= \[([^\]]*)\]\s+resources = \[([^\]]*)\]', doc))
+    assert statements == {'"cloudtrail:StopLogging", "cloudtrail:GetTrailStatus"':
+                          '"arn:aws:cloudtrail:${local.region}:${local.account_id}:trail/stratus-red-team-*"',
+                          '"ec2:DescribeAccountAttributes"': '"*"'}
+
+
 def test_a_shadow_pass_requires_proof_that_the_rule_fired():
     base = {"run_id": "run-s-1", "malicious": True, "techniques": ["T1110"], "started_at": "2026-10-06T10:00:00.000Z",
             "ended_at": "2026-10-06T10:00:05.000Z", "expect": [{"source": "wazuh", "rule_id": "100121", "case": False}]}
