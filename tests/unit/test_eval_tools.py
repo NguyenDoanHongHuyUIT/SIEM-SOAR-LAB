@@ -207,6 +207,16 @@ def test_pipeline_only_sample_findings_are_excluded_from_detection_metrics():
     assert metrics["alert_duplication_reduction"]["alerts"] == 0
 
 
+def test_a_measurement_period_excludes_runs_of_an_earlier_system_version():
+    old = {**RUNS[0], "run_id": "run-old", "started_at": "2026-10-06T09:00:00.000Z"}
+    new = {**RUNS[0], "run_id": "run-new", "rules_release": "facf9b9c"}
+    cases, runs = ev.in_scope([_case(1, created="2026-10-06T09:00:30.000Z")], [old, new], "2026-10-06T09:30:00Z")
+    assert cases == [] and [r["run_id"] for r in runs] == ["run-new"]
+    assert ev.compute_metrics(cases, runs, {})["scope"]["rules_releases"] == ["facf9b9c"]
+    with pytest.raises(ValueError, match="ISO"):
+        ev.in_scope([], [], "yesterday")
+
+
 def test_metrics_empty_dataset_does_not_crash():
     m = ev.compute_metrics([], [], {})
     assert m["counts"]["cases"] == 0 and m["alert_duplication_reduction"]["reduction"] is None
@@ -299,10 +309,21 @@ def test_soarctl_list_show_decide_feedback(store, sfn, capsys, monkeypatch):
     shown = json.loads(capsys.readouterr().out)
     assert shown["case"]["case_id"] == cid and shown["audit"] and "raw" not in shown["case"]
     assert soarctl.main(["show", "C-nope"]) == 1
-    assert soarctl.main(["decide", cid, "--gate", "approval", "--decision", "dismiss"]) == 0
+    import boto3
+    boto3.client("ssm", region_name="ap-southeast-1").put_parameter(
+        Name="/siemsoar/slack/approver_ids", Value="U0APPROVER", Type="String", Overwrite=True)
+    decide = ["decide", cid, "--gate", "approval", "--decision", "dismiss", "--approver", "U0APPROVER"]
+    monkeypatch.setattr(soarctl.sys.stdin, "isatty", lambda: False)
+    assert soarctl.main(decide) == 1 and store.get_case(cid)["status"] == Status.NOTIFIED  # no terminal: no decision
+    monkeypatch.setattr(soarctl.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda prompt: cid)
+    assert soarctl.main([*decide[:-1], "U0SOMEONE"]) == 1  # not on the approver list
+    assert soarctl.main(decide) == 0
     assert store.get_case(cid)["status"] == Status.DISMISSED
-    assert sfn.success[0][1]["channel"] == "cli" and sfn.success[0][1]["actor"].startswith("cli:arn:aws")
-    assert soarctl.main(["decide", cid, "--gate", "approval", "--decision", "dismiss"]) == 1  # rejected: already handled
+    assert sfn.success[0][1]["channel"] == "cli" and sfn.success[0][1]["actor"] == "cli:U0APPROVER"
+    audit = [a for a in store.list_audit(cid) if a["action"] == "decision:approval:dismiss"][0]
+    assert audit["detail"]["aws_principal"].startswith("arn:aws")  # who ran the CLI is kept next to who approved
+    assert soarctl.main(decide) == 1  # rejected: already handled
     stats = soarctl.feedback_stats(store)
     assert stats["UnauthorizedAccess:EC2/SSHBruteForce"] == {"cases": 1, "false_positive": 1}
 

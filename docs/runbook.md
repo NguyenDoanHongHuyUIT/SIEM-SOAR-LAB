@@ -75,10 +75,14 @@ quan sát FP → PR promote → active. Rollback: `git revert` + merge, hoặc c
 ```bash
 python -m tools.soarctl list --status NOTIFIED
 python -m tools.soarctl show <case_id>
-python -m tools.soarctl decide <case_id> --gate approval --decision approve|dismiss|acknowledge
-python -m tools.soarctl decide <case_id> --gate restore  --decision restore_tp|restore_fp
+python -m tools.soarctl decide <case_id> --gate approval --decision approve|dismiss|acknowledge --approver <Slack member ID>
+python -m tools.soarctl decide <case_id> --gate restore  --decision restore_tp|restore_fp --approver <Slack member ID>
 ```
-Cùng một đường kiểm tra với Slack (trạng thái, token một lần, audit `channel=cli`).
+Cùng một đường kiểm tra với Slack (trạng thái, token một lần, audit `channel=cli`). Đây là cổng **của con người**:
+`--approver` phải nằm trong `/siemsoar/slack/approver_ids` (cùng danh sách Slack dùng), lệnh chỉ chạy trong terminal
+tương tác và yêu cầu gõ lại mã case; credential AWS một mình (script, tự động hóa, trợ lý AI) không phải là phê duyệt.
+Audit ghi cả người duyệt (`cli:<member id>`) lẫn danh tính AWS đã chạy lệnh. Thẻ Slack của case được đóng lại dù quyết
+định đến từ kênh nào.
 
 ## 8. Khi có sự cố
 | Triệu chứng | Làm gì |

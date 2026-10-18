@@ -28,10 +28,28 @@ def _env(prefix: str) -> None:
     os.environ.setdefault("CASES_TABLE", f"{prefix}-cases")
 
 
-def _actor() -> str:
+def _principal() -> str:
     from siemsoar import aws
-    arn = aws.client("sts").get_caller_identity()["Arn"]
-    return f"cli:{arn}"
+    return aws.client("sts").get_caller_identity()["Arn"]
+
+
+def _approvers(prefix: str) -> set[str]:
+    from siemsoar.ssm import get_param
+    raw = get_param(f"/{prefix}/slack/approver_ids", "") or ""
+    return {a.strip() for a in raw.split(",") if a.strip() and a.strip() != "CHANGE_ME"}
+
+
+def confirm_human_decision(case_id: str, approver: str, approvers: set[str], tty: bool, typed: str | None) -> str | None:
+    """The CLI is the fallback of a HUMAN gate: the approver must be on the same list Slack enforces, and the decision
+    is only taken from an interactive terminal where that person retypes the case id. AWS credentials alone (a script,
+    an automation, an AI assistant) are not an approval. Returns the refusal reason, or None."""
+    if approver not in approvers:
+        return f"{approver!r} is not an authorised approver (/<prefix>/slack/approver_ids)"
+    if not tty:
+        return "decisions need an interactive terminal (a human retyping the case id); refusing a non-interactive call"
+    if (typed or "").strip() != case_id:
+        return "case id not confirmed"
+    return None
 
 
 def feedback_stats(store) -> dict:
@@ -59,6 +77,7 @@ def main(argv: list[str] | None = None) -> int:
     dc.add_argument("case_id")
     dc.add_argument("--gate", choices=["approval", "restore"], required=True)
     dc.add_argument("--decision", required=True)
+    dc.add_argument("--approver", required=True, help="your Slack member id (must be in /<prefix>/slack/approver_ids)")
     sub.add_parser("feedback")
     lab = sub.add_parser("lab")
     lab.add_argument("action", choices=["status", "up", "extend", "down"])
@@ -92,8 +111,16 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"case": case, "audit": store.list_audit(args.case_id)}, indent=2, default=str))
         return 0
     if args.cmd == "decide":
+        tty = sys.stdin.isatty()
+        typed = input(f"{args.decision} on gate {args.gate} as {args.approver}. Type the case id to confirm: ") \
+            if tty else None
+        refusal = confirm_human_decision(args.case_id, args.approver, _approvers(args.prefix), tty, typed)
+        if refusal:
+            print(f"rejected: {refusal}", file=sys.stderr)
+            return 1
         try:
-            out = apply_decision(store, args.case_id, args.gate, args.decision, actor=_actor(), channel="cli")
+            out = apply_decision(store, args.case_id, args.gate, args.decision, actor=f"cli:{args.approver}",
+                                 channel="cli", detail={"aws_principal": _principal()})
         except (DecisionRejected, CaseNotFound) as err:
             print(f"rejected: {err}", file=sys.stderr)
             return 1

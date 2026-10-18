@@ -21,7 +21,7 @@ class DecisionRejected(Exception):
 
 
 def apply_decision(store: CaseStore, case_id: str, gate: str, decision: str, actor: str,
-                   channel: str = "slack") -> dict:
+                   channel: str = "slack", detail: dict | None = None) -> dict:
     case = store.get_case(case_id)
     plan = case.get("response_plan", {}).get("type", "none")
 
@@ -65,5 +65,8 @@ def apply_decision(store: CaseStore, case_id: str, gate: str, decision: str, act
         if code not in {"TaskTimedOut", "InvalidToken", "TaskDoesNotExist"}:
             store.release_token(case_id, gate)  # transient: allow a retry
         raise DecisionRejected(f"workflow no longer waiting ({code})") from err
-    store.audit(case_id, f"decision:{gate}:{decision}", actor, {"channel": channel})
+    store.audit(case_id, f"decision:{gate}:{decision}", actor, {"channel": channel, **(detail or {})})
+    from .notifier import close_card  # late import: notifier pulls the Slack/SNS clients
+
+    close_card(store.get_case(case_id), f"*{decision}* by `{actor}` via {channel}")
     return output
