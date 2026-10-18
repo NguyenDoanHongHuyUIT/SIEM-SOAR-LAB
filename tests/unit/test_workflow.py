@@ -160,21 +160,44 @@ def test_sample_finding_without_real_resource_is_acknowledge_only(store, sfn):
     assert "Preflight" not in visited
 
 
-def test_protected_instance_fails_safe_without_changes(store, sfn):
-    lab = Lab(tags={"siemsoar:protected": "true"})
-    cid = start(store, ev.guardduty_instance(lab.iid))
-    outcome, data, _ = asl_runner.run(cid, CFG, gates("approve"))
+def _notify_only(store, cid, reason):
+    """Out of scope is known before the human is asked: the card offers acknowledge/dismiss, never an approval that
+    preflight would have to refuse."""
+    from siemsoar.decisions import DecisionRejected
+
+    def try_approve_then_acknowledge(gate, data, token):
+        with pytest.raises(DecisionRejected, match="use acknowledge"):
+            apply_decision(store, data["case_id"], gate, "approve", actor="slack:UTEST")
+        apply_decision(store, data["case_id"], gate, "acknowledge", actor="slack:UTEST")
+
+    outcome, _, visited = asl_runner.run(cid, CFG, try_approve_then_acknowledge)
     case = store.get_case(cid)
-    assert outcome == "Fail:CaseFailedSafe" and case["status"] == "FAILED"
-    assert case["failure_error"] == "PreflightFailed" and "no containment change" in case["safe_state"]
+    assert outcome == "Succeed" and case["status"] == "ACKNOWLEDGED" and "Preflight" not in visited
+    assert case["response_plan"]["type"] == "none" and reason in case["plan_note"]
+
+
+@pytest.mark.parametrize("tags, reason", [({"siemsoar:protected": "true"}, "siemsoar:protected=true"),
+                                          ({"siemsoar:zone": "security"}, "not in zone=workload")])
+def test_out_of_scope_instance_is_notify_only(store, sfn, tags, reason):
+    lab = Lab(tags=tags)
+    cid = start(store, ev.guardduty_instance(lab.iid))
+    _notify_only(store, cid, reason)
     assert lab.sgs() == [lab.sg]
 
 
-def test_workload_zone_is_enforced(store, sfn):
-    lab = Lab(tags={"siemsoar:zone": "security"})
+def test_preflight_still_refuses_a_target_that_left_scope_while_awaiting_approval(store, sfn):
+    """Enrich judged the instance in scope; the tag changed before the click. Preflight re-checks and fails safe."""
+    lab = Lab()
     cid = start(store, ev.guardduty_instance(lab.iid))
-    outcome, _, _ = asl_runner.run(cid, CFG, gates("approve"))
-    assert outcome.startswith("Fail") and store.get_case(cid)["failure_error"] == "PreflightFailed"
+
+    def protect_then_approve(gate, data, token):
+        lab.ec2.create_tags(Resources=[lab.iid], Tags=[{"Key": "siemsoar:protected", "Value": "true"}])
+        apply_decision(store, data["case_id"], gate, "approve", actor="slack:UTEST")
+
+    outcome, _, _ = asl_runner.run(cid, CFG, protect_then_approve)
+    case = store.get_case(cid)
+    assert outcome == "Fail:CaseFailedSafe" and case["failure_error"] == "PreflightFailed"
+    assert "no containment change" in case["safe_state"] and lab.sgs() == [lab.sg]
 
 
 def test_circuit_breaker_stops_mass_isolation(store, sfn):
@@ -322,9 +345,16 @@ def test_iam_user_outside_prefix_is_refused(store, sfn):
     key = iam.create_access_key(UserName="prod-admin")["AccessKey"]["AccessKeyId"]
     event = ev.guardduty_key(user="prod-admin", key=key)
     cid = start(store, event)
-    outcome, _, _ = asl_runner.run(cid, CFG, gates("approve"))
-    assert outcome.startswith("Fail") and store.get_case(cid)["failure_error"] == "PreflightFailed"
+    _notify_only(store, cid, "outside the containment scope")
     assert response.list_keys("prod-admin") == {key: "Active"}
+
+
+def test_out_of_scope_iam_user_is_never_read(store, sfn, monkeypatch):
+    """Lab session 2: the operator's key deleted a Stratus trail; the SOAR role may not read that user (AccessDenied
+    failed the case). Scope is decided from the name alone, before any IAM call."""
+    monkeypatch.setattr(response, "list_keys", lambda user: pytest.fail(f"read IAM user {user}"))
+    cid = start(store, ev.guardduty_key(user="Huy", key="AKIAIOSFODNN7EXAMPLE"))
+    _notify_only(store, cid, "IAM user Huy is outside the containment scope")
 
 
 # ------------------------------------------------------------------ wazuh host alert end-to-end

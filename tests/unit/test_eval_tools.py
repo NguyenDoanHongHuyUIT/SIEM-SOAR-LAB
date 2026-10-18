@@ -182,7 +182,31 @@ def test_metrics_ground_truth_labelling():
     assert m["detection_latency_by_source_s"]["run_start_to_case"]["suricata"]["p50"] == 20.0
     cov = m["attack_coverage"]
     assert set(cov["techniques_detected"]) == {"T1136.001", "T1071.001"} and cov["coverage_of_exercised"] == 1.0
-    assert m["robustness"] == {"runs": 1, "passed": 1, "detail": m["robustness"]["detail"]}
+    assert m["robustness"] == {"runs": 1, "passed": 1, "not_executed": 0, "detail": m["robustness"]["detail"]}
+
+
+def test_robustness_cases_are_attributed_by_their_scripted_decision_and_kept_out_of_rule_quality():
+    """Lab session 2: back-to-back robustness runs on one host overlap in time, and their scripted dismissals counted as
+    an analyst's FP for rule 100110 (precision 0). The actor `sim:<run_id>` names the run exactly."""
+    runs = [{"run_id": f"run-202610180609-robust-{n}", "scenario": f"robust-{n}", "kind": "robustness",
+             "malicious": True, "expect": [], "started_at": start, "ended_at": end,
+             "result": {"pass": True, "checks": [{"name": "x", "ok": True}]}}
+            for n, start, end in (("double-click", "2026-10-18T06:09:18Z", "2026-10-18T06:09:54Z"),
+                                  ("slack-down", "2026-10-18T06:09:59Z", "2026-10-18T06:10:28Z"))]
+    runs.append({"run_id": "run-202610180610-robust-mid-failure", "scenario": "robust-mid-failure",
+                 "kind": "robustness", "malicious": True, "expect": [], "started_at": "2026-10-18T06:10:32Z",
+                 "ended_at": "2026-10-18T06:11:15Z",
+                 "result": {"pass": False, "checks": [{"name": "execution", "ok": False, "detail": "harness error"}]}})
+    cases = [_case(1, rule="100110", status="DISMISSED", created="2026-10-18T06:09:33Z",
+                   approver="sim:run-202610180609-robust-double-click"),
+             _case(2, rule="100110", status="DISMISSED", created="2026-10-18T06:10:16Z",
+                   approver="sim:run-202610180609-robust-slack-down")]
+    assert [catalog.case_in_run(cases[1], r) for r in runs] == [False, True, False]  # windows overlap, actor decides
+    m = ev.compute_metrics(cases, runs, {})
+    assert "100110" not in m["rule_quality"]
+    assert {k: m["robustness"][k] for k in ("runs", "passed", "not_executed")} == {"runs": 2, "passed": 2,
+                                                                                    "not_executed": 1}
+    assert "không thực thi" in ev.render_markdown(m)
 
 
 def test_metrics_false_negative_and_shadow_ok():
@@ -452,6 +476,17 @@ def test_stratus_requires_the_expected_aws_account_and_successful_cleanup(monkey
     with pytest.raises(RuntimeError, match="cleanup failed"):
         r.exec_stratus({"stratus_technique": "aws.persistence.iam-create-user-login-profile"}, "run-y")
     assert [command[1] for command in calls[-2:]] == ["detonate", "cleanup"]
+
+    # detonating as the victim: the run's target is the victim key, i.e. the resource id of the case it should open
+    monkeypatch.setattr(runner.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=0))
+    r.victim_credentials = lambda: {"user": "lab-victim", "AWS_ACCESS_KEY_ID": "AKIAEXAMPLEVICTIM",
+                                    "AWS_SECRET_ACCESS_KEY": "x"}
+    r.aws.region = lambda: "us-east-1"
+    out = r.exec_stratus({"stratus_technique": "aws.defense-evasion.cloudtrail-stop", "detonate_as": "victim"}, "run-z")
+    assert out["target"] == "lab-victim/AKIAEXAMPLEVICTIM"
+    assert catalog.case_in_run({"resource_id": "Huy/AKIAOPERATOR", "created_at": "2026-10-18T06:34:00Z"},
+                               {"target": out["target"], "started_at": "2026-10-18T06:14:14Z",
+                                "ended_at": "2026-10-18T06:15:42Z", "settle_seconds": 1800}) is False
 
 
 def test_the_victim_policy_allows_the_stratus_preflight_and_only_stratus_trails():

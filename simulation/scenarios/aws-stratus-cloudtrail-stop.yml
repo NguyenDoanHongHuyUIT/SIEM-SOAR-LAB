@@ -9,5 +9,9 @@ documented_detection:     # Stratus' own page names the GuardDuty finding this t
   url: https://stratus-red-team.cloud/attack-techniques/AWS/aws.defense-evasion.cloudtrail-stop/
 expect:
   - {source: guardduty, rule_id: 'Stealth:IAMUser/CloudTrailLoggingDisabled', case: true}
-settle_seconds: 900
-notes: Stratus warms up (creates its own trail) with the operator's credentials and detonates with lab-victim's key.
+settle_seconds: 1800      # lab session 2: GuardDuty raised a CloudTrailLoggingDisabled finding 18 min after the API call
+notes: >-
+  Stratus warms up (creates its own trail) with the operator's credentials and detonates with lab-victim's key.
+  Its cleanup deletes the trail with the operator's key, which GuardDuty also reports (same finding type, the
+  operator as actor): that case is outside the containment scope (notify only) and, the run's target being the
+  victim key, is not attributed to this run.

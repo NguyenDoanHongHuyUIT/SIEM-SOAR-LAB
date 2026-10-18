@@ -269,7 +269,8 @@ class Runner:
             if s.get("detonate_as") == "victim":
                 subprocess.run(["stratus", "warmup", tech], check=True, timeout=600)  # operator builds the infra
                 creds = self.victim_credentials()
-                details.update(detonated_by=creds["user"], access_key_id=creds["AWS_ACCESS_KEY_ID"])
+                details.update(detonated_by=creds["user"], access_key_id=creds["AWS_ACCESS_KEY_ID"],
+                               target=f'{creds["user"]}/{creds["AWS_ACCESS_KEY_ID"]}')  # the case's resource id
                 env = {k: v for k, v in os.environ.items() if not k.startswith("AWS_") or k == "AWS_REGION"}
                 env.update({k: creds[k] for k in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY")},
                            AWS_REGION=self.aws.region())
@@ -451,7 +452,7 @@ class Runner:
         run["ended_at"] = ended.strftime("%Y-%m-%dT%H:%M:%S.%fZ")[:-4] + "Z"
         run["settle_seconds"] = int(s.get("settle_seconds", 120))
         run["details"] = {k: v for k, v in details.items() if k != "instance"}
-        run["target"] = details.get("instance")
+        run["target"] = details.get("instance") or details.get("target")
         self.store.put_run(run)
         if kind != "robustness" and self.wait and "result" not in run:
             settle = run["settle_seconds"]
