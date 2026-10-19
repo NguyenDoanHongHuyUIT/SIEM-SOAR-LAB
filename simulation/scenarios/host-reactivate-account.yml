@@ -14,6 +14,6 @@ cleanup:
 expect:
   - {source: wazuh, rule_id: "100102", case: false}
   # the atomic first creates the account it then manipulates: these fire too, as a side effect of its set-up step
-  - {source: wazuh, rule_id: "100110", case: true, optional: true}
+  - {source: wazuh, rule_id: "100110", case: false, optional: true}
   - {source: wazuh, rule_id: "100100", case: false, optional: true}
 settle_seconds: 120

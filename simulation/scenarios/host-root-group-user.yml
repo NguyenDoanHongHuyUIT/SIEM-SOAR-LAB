@@ -13,7 +13,7 @@ verify:
 cleanup:
   - 'userdel siemsoar_r_{short} || true'
 expect:
-  - {source: wazuh, rule_id: "100110", case: true}
+  - {source: wazuh, rule_id: "100110", case: false}
   - {source: wazuh, rule_id: "100100", case: false}
   - {source: wazuh, rule_id: "100102", case: false}   # chpasswd writes the password hash into /etc/shadow
 settle_seconds: 120
