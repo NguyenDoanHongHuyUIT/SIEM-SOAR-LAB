@@ -310,8 +310,11 @@ class Runner:
         return {"instance": iid, "pcap": name, "output": out[-300:]}
 
     def siem_alerts(self, run: dict) -> list[dict]:
-        """Every SIEMSOAR alert Wazuh raised on the run's target inside the run window (any lifecycle state)."""
-        if not run.get("target"):
+        """Every SIEMSOAR alert Wazuh raised on the run's target inside the run window (any lifecycle state).
+
+        Only hosts run a Wazuh agent: a cloud target (the IAM key of a Stratus run) has no SIEM layer, GuardDuty is
+        its only detector, so there is nothing to read (lab session 3 crashed here on 'lab-victim/AKIA...')."""
+        if not run.get("target") or not INSTANCE_RE.fullmatch(str(run["target"])):
             return []
         output = self.ssm_run(self.instance("wazuh-manager"), [siem_alerts_command(run["target"])])
         return in_window(parse_siem_alerts(output), run["started_at"], run["ended_at"], run["settle_seconds"])
