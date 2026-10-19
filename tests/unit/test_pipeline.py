@@ -32,6 +32,9 @@ def test_new_finding_same_resource_is_deduplicated(store, sfn):
     assert store.get_case(first["case_id"])["alert_count"] == 2
     assert len(sfn.started) == 1
     assert "alert_deduplicated" in [a["action"] for a in store.list_audit(first["case_id"])]
+    third = ingest_handler.handler(ev.guardduty_instance(fid="f3"))
+    case = store.get_case(third["case_id"])
+    assert len(case["merged_at"]) == 2 and all(t >= case["created_at"] for t in case["merged_at"])
 
 
 def test_dedup_target_closed_opens_new_case(store, sfn):

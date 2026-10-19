@@ -38,7 +38,7 @@ sys.path.insert(0, str(ROOT / "src" / "lambdas"))
 
 from siemsoar.util import parse_iso  # noqa: E402
 
-from simulation.catalog import case_in_run  # noqa: E402
+from simulation.catalog import case_in_run, merged_in_run  # noqa: E402
 
 GROUND_TRUTH_ACTOR = "sim:ground-truth"
 
@@ -111,7 +111,7 @@ def classify(cases: list[dict], runs: list[dict], canary_rules: frozenset[str] =
         return rules.setdefault(rule_id, {"tp": 0, "fp": 0, "fn": 0, "fn_detection": 0, "fn_pipeline": 0,
                                           "fn_unverified": 0, "shadow_violation": 0, "shadow_ok": 0,
                                           "shadow_missed": 0, "shadow_unverified": 0, "human_fp": 0,
-                                          "unplanned": 0, "unlabelled": 0})
+                                          "unplanned": 0, "unlabelled": 0, "tp_merged": 0})
 
     invalid = {r["run_id"] for r in runs if execution_failed(r)}
     matched: set[tuple[str, str]] = set()
@@ -163,6 +163,12 @@ def classify(cases: list[dict], runs: list[dict], canary_rules: frozenset[str] =
             if (run["run_id"], str(e["rule_id"])) in matched or e.get("optional"):
                 continue
             b = bucket(str(e["rule_id"]))
+            if e.get("case", True) and run.get("malicious", True) and any(
+                    str(c["rule_id"]) == str(e["rule_id"]) and c["source"] == e["source"] and merged_in_run(c, run)
+                    for c in cases):
+                b["tp"] += 1          # detected; dedup merged it into the case already open on this target
+                b["tp_merged"] += 1
+                continue
             observed = (run.get("observed") or {}).get(f"{e['source']}:{e['rule_id']}")
             if e.get("case", True):
                 if run.get("malicious", True):
@@ -435,7 +441,8 @@ def render_markdown(m: dict) -> str:
     for rid, b in sorted(m["rule_quality"].items()):
         prec = "n/a" if b["precision"] is None else b["precision"]
         rec = "n/a" if b["recall"] is None else b["recall"]
-        L.append(f"| {rid} | {b['tp']} | {b['fp']} | {b['human_fp']} | {b['shadow_violation']} | {b['fn']} "
+        tp = f"{b['tp']} ({b['tp_merged']} gộp vào case đang mở)" if b.get("tp_merged") else b["tp"]
+        L.append(f"| {rid} | {tp} | {b['fp']} | {b['human_fp']} | {b['shadow_violation']} | {b['fn']} "
                  f"({b['fn_detection']} / {b['fn_pipeline']} / {b['fn_unverified']}) | {b['unplanned']} "
                  f"| {prec} | {rec} |")
     dq = m["detection_quality"]

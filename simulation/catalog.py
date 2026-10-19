@@ -242,6 +242,22 @@ def case_in_run(case: dict, run: dict) -> bool:
     return created <= end + timedelta(seconds=int(run.get("settle_seconds", 120)))
 
 
+def merged_in_run(case: dict, run: dict) -> bool:
+    """The run's detection was merged into a case opened earlier (dedup keeps one open case per key and records each
+    merge in `merged_at`): on the run's target, an alert merged inside the run's window. The case still belongs to the
+    run that created it (case_in_run); this only says the later run was detected, not missed."""
+    from datetime import timedelta
+    start, end = _iso(run.get("started_at")), _iso(run.get("ended_at"))
+    target = run.get("target")
+    if not (start and end and target) or case.get("run_id") or case_in_run(case, run):
+        return False
+    if target not in (case.get("resource_id"), (case.get("resource") or {}).get("agent_name")):
+        return False
+    hi = None if run.get("target_unique") else end + timedelta(seconds=int(run.get("settle_seconds", 120)))
+    return any(t and t >= start - timedelta(seconds=5) and (hi is None or t <= hi)
+               for t in (_iso(x) for x in case.get("merged_at") or []))
+
+
 # --------------------------------------------------------------------------- scenarios <-> rules
 def metadata_id(expectation: dict, meta: dict[str, dict]) -> str | None:
     """The rules/metadata id an expectation points at (Suricata expectations name the generated Wazuh rule)."""

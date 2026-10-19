@@ -362,6 +362,27 @@ def test_settle_windows_are_checked_against_the_measured_lag():
     assert "SÁT" in ev.render_markdown(ev.compute_metrics([late_case], [fast, slow, cloud], {}))
 
 
+def test_a_repeat_run_merged_into_the_open_case_is_detected_not_missed():
+    """Two host-useradd runs within the dedup window: the second alert is merged into the case of the first (by
+    design). The second run is a detection (tp_merged), not a pipeline false negative, and the case still belongs to
+    the first run only."""
+    exp = [{"source": "wazuh", "rule_id": "100110", "case": True}]
+    base = {"scenario": "host-useradd", "kind": "atomic", "malicious": True, "techniques": ["T1136.001"],
+            "evidence": True, "expect": exp, "settle_seconds": 120, "target": "i-0abc1234def567890"}
+    first = {**base, "run_id": "run-1", "started_at": "2026-10-19T04:00:00Z", "ended_at": "2026-10-19T04:00:10Z"}
+    second = {**base, "run_id": "run-2", "started_at": "2026-10-19T04:20:00Z", "ended_at": "2026-10-19T04:20:10Z"}
+    case = _case(1, rule="100110", created="2026-10-19T04:00:05Z", resource_id="i-0abc1234def567890",
+                 merged_at=["2026-10-19T04:20:06Z"], alert_count=2)
+    assert catalog.case_in_run(case, first) and not catalog.case_in_run(case, second)
+    assert catalog.merged_in_run(case, second) and not catalog.merged_in_run(case, first)
+    q = ev.compute_metrics([case], [first, second], {})["rule_quality"]["100110"]
+    assert q["tp"] == 2 and q["tp_merged"] == 1 and q["fn"] == 0 and q["recall"] == 1.0
+    check = runner.match_expectations(exp, [case], second)[0]
+    assert check["ok"] and check["detail"] == ["C1"]
+    elsewhere = {**case, "resource_id": "i-0fff1234def567890"}  # merged on another host: not this run's detection
+    assert not catalog.merged_in_run(elsewhere, second)
+
+
 def test_manual_steps_are_read_from_the_case_timeline():
     assert ev.manual_steps({"approved_at": "t1", "restoring_at": "t2"}) == 2
     assert ev.manual_steps({"approved_at": "t1"}) == 1
