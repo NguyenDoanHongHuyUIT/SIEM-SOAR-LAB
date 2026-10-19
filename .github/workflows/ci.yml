@@ -136,7 +136,7 @@ jobs:
       - run: pip install -r requirements-dev.txt
       - name: Offline request validation (always)
         run: pytest tests/contract -q
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v6
         if: vars.PLAN_ROLE_ARN != ''
         with:
           role-to-assume: ${{ vars.PLAN_ROLE_ARN }}
