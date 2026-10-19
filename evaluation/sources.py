@@ -175,7 +175,15 @@ def estimate_session_cost(sessions: list[dict], prices: dict[str, float]) -> dic
 
 
 def actual_cost(ce, start: datetime, end: datetime, tag_key: str = "Project", tag_value: str = "siem-soar-lab") -> dict:
-    """What AWS billed, per service, for resources carrying the cost-allocation tag (Cost Explorer, daily)."""
+    """What AWS billed, per service, for resources carrying the cost-allocation tag (Cost Explorer, daily).
+
+    An empty answer for an inactive tag means "unknown", not "$0": Cost Explorer only filters by user-defined tags
+    that are activated as cost-allocation tags. That case raises, so the report says why there is no figure."""
+    tags = ce.list_cost_allocation_tags(TagKeys=[tag_key]).get("CostAllocationTags", [])
+    status = next((t.get("Status") for t in tags if t.get("TagKey") == tag_key), None)
+    if status != "Active":
+        raise RuntimeError(f"cost-allocation tag {tag_key!r} is {status or 'unknown to Billing'}: activate it in "
+                           f"Billing > Cost allocation tags; until then the billed cost is unknown, not $0")
     res = ce.get_cost_and_usage(
         TimePeriod={"Start": start.date().isoformat(), "End": end.date().isoformat()}, Granularity="DAILY",
         Metrics=["UnblendedCost"], Filter={"Tags": {"Key": tag_key, "Values": [tag_value]}},

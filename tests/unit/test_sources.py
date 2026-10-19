@@ -116,6 +116,11 @@ def test_cost_estimate_needs_a_price_for_every_type_and_never_invents_one():
 
 def test_actual_cost_sums_billed_amounts_by_service_for_the_tag():
     class CE:
+        status = "Active"
+
+        def list_cost_allocation_tags(self, TagKeys):
+            return {"CostAllocationTags": [{"TagKey": "Project", "Type": "UserDefined", "Status": self.status}]}
+
         def get_cost_and_usage(self, **kw):
             self.kw = kw
             day = lambda ec2, s3: {"Groups": [  # noqa: E731
@@ -126,6 +131,9 @@ def test_actual_cost_sums_billed_amounts_by_service_for_the_tag():
     out = src.actual_cost(ce, t(0), t(0) + timedelta(days=2))
     assert out["total_usd"] == 2.03 and out["by_service_usd"]["Amazon Elastic Compute Cloud - Compute"] == 2.0
     assert ce.kw["Filter"] == {"Tags": {"Key": "Project", "Values": ["siem-soar-lab"]}} and ce.kw["Granularity"] == "DAILY"
+    ce.status = "Inactive"  # the lab account on 2026-10-19: Cost Explorer answers nothing, which is not "$0"
+    with pytest.raises(RuntimeError, match="unknown, not \$0"):
+        src.actual_cost(ce, t(0), t(0) + timedelta(days=2))
 
 
 # ------------------------------------------------------------------ baseline
