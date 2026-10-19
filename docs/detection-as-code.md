@@ -39,6 +39,15 @@ Ví dụ: 100103 (`/etc/sudoers`) mang T1548.003 vì Atomic T1548.003 #5 kích h
 ## Rule mạng: ET Open được quản lý, không tự viết chữ ký
 Phát hiện mạng lấy từ **Emerging Threats Open** (rule cộng đồng, BSD). Metadata `source: et-open` chọn sid, `wazuh_rule_id` khai **tường minh** id rule Wazuh sinh ra (không tính từ sid). `python -m tools.refdata et-open` ghim nội dung rule đó (phiên bản ET, SHA-256 bản phát hành) vào `rules/reference/et-open-managed.json`; bản build đưa nội dung ghim vào `siemsoar.rules` và sinh `disable.conf` để `suricata-update` bỏ bản trôi nổi của các sid này. Có thể bật rule ET mặc định tắt (ví dụ 2009582 `NMAP -sS window 1024`), vẫn bắt đầu ở shadow. Rule cục bộ (`rules/suricata/*.rules`, sid 9000000–9099999, msg bắt đầu `SIEMSOAR`) vẫn được hỗ trợ.
 
+## Kỹ thuật mới: quan sát trước, rule sau
+1. Chọn test công khai trong chỉ mục Atomic Red Team đã ghim (`rules/reference/atomic-red-team-linux.json`), kiểm YAML gốc: không `dependencies`, có cleanup, không phá hoại.
+2. Kịch bản với `expect: []` (**quan sát**): báo cáo ghi kỹ thuật là *đã chạy, chưa phát hiện*.
+3. `python -m tools.observe_alerts <run_id>`: mọi alert lượt đó sinh trên máy mục tiêu, kể cả rule chính thức (audit 80792, FIM 550/554), kèm trường có thể dùng (lệnh, đường dẫn, key audit). Lọc và gom nhóm chạy trên manager (output SSM giới hạn 24 KB).
+4. Viết rule SIEMSOAR đứng trên rule chính thức đã bắn, dùng **chính các dòng log thật** làm test `match`/`no_match`, vào shadow, đo FP bằng kịch bản lành tính, rồi mới promote.
+
+## Giảm FP bằng rule ngoại lệ có bằng chứng
+Không sửa thẳng điều kiện của rule đang active. Ví dụ 100110 (bọc 5902 "new user") bắn cả khi admin tạo tài khoản dịch vụ (FP đo được ở kịch bản lành tính). Dòng `useradd` thật trên lab cho thấy mọi tài khoản Atomic T1136.001 có `shell=/bin/bash`, tài khoản dịch vụ có `/usr/sbin/nologin`; `nologin(8)` dùng để từ chối đăng nhập. Rule ngoại lệ **100112** (con của 100110, level 3, không case) nhận các tài khoản không có shell đăng nhập; test dùng đúng các dòng log thật; rủi ro còn lại (tạo `nologin` rồi đổi shell) do rule chính thức 5904 (usermod) ghi nhận. Mỗi sự kiện Wazuh chỉ sinh một alert (rule con khớp sâu nhất), nên không chạy song song hai biến thể của một rule trên cùng sự kiện.
+
 ## Thêm một rule
 1. Wazuh: thêm `<rule id="1001xx">` vào `rules/wazuh/*.xml` (dải 100000–119999). Suricata: tạo metadata `source: et-open` (sid ET) hoặc thêm dòng `alert ... sid:90000xx` vào `rules/suricata/siemsoar.rules`.
 2. Tạo `rules/metadata/<engine>-<id>.yml`: `state: shadow`, `response`, `mitre` (có nguồn, xem trên; `[]` nếu không có), `references` (HTTPS, gồm permalink ATT&CK cho từng ID), `expected_fp`, `tests` (≥1 `match`, ≥1 `no_match`; Wazuh `log`/`logs`/`fim`, Suricata `pcap` có trong `rules/pcaps/provenance.json`). Rule Suricata thêm `level` và `wazuh_rule_id` (110000–119999, duy nhất).
