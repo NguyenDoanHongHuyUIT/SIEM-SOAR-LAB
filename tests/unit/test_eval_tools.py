@@ -148,6 +148,14 @@ def test_a_run_specific_target_has_no_late_arrival_cut_off_and_other_targets_nev
     assert catalog.case_in_run(late, shared) is False
 
 
+def test_a_cloud_target_has_no_siem_layer_to_read():
+    r = object.__new__(runner.Runner)
+    r.ssm_run = lambda *a, **k: pytest.fail("no Wazuh query for an IAM key target")
+    run = {"target": "lab-victim/AKIAUSHIDJ5VBY5J6DXQ", "started_at": "2026-10-19T01:34:20Z",
+           "ended_at": "2026-10-19T01:35:27Z", "settle_seconds": 1800}
+    assert r.siem_alerts(run) == []
+
+
 def test_the_runner_stops_waiting_once_every_expected_case_exists(monkeypatch):
     from types import SimpleNamespace
     run = {"run_id": "run-w", "started_at": "2026-10-19T01:34:20Z", "ended_at": "2026-10-19T01:35:27Z",
