@@ -180,10 +180,13 @@ def actual_cost(ce, start: datetime, end: datetime, tag_key: str = "Project", ta
     An empty answer for an inactive tag means "unknown", not "$0": Cost Explorer only filters by user-defined tags
     that are activated as cost-allocation tags. That case raises, so the report says why there is no figure."""
     tags = ce.list_cost_allocation_tags(TagKeys=[tag_key]).get("CostAllocationTags", [])
-    status = next((t.get("Status") for t in tags if t.get("TagKey") == tag_key), None)
-    if status != "Active":
-        raise RuntimeError(f"cost-allocation tag {tag_key!r} is {status or 'unknown to Billing'}: activate it in "
-                           f"Billing > Cost allocation tags; until then the billed cost is unknown, not $0")
+    tag = next((t for t in tags if t.get("TagKey") == tag_key), {})
+    if tag.get("Status") != "Active":
+        raise RuntimeError(f"cost-allocation tag {tag_key!r} is {tag.get('Status') or 'unknown to Billing'}: activate "
+                           f"it in Billing > Cost allocation tags; until then the billed cost is unknown, not $0")
+    # Cost Explorer attributes tagged cost from the activation on, and the data lags (up to ~24 h): a period that starts
+    # before the activation is only partly covered, and an empty answer right after it is "not yet known".
+    activated = _time(tag.get("LastUpdatedDate"))
     res = ce.get_cost_and_usage(
         TimePeriod={"Start": start.date().isoformat(), "End": end.date().isoformat()}, Granularity="DAILY",
         Metrics=["UnblendedCost"], Filter={"Tags": {"Key": tag_key, "Values": [tag_value]}},
@@ -193,10 +196,17 @@ def actual_cost(ce, start: datetime, end: datetime, tag_key: str = "Project", ta
         for group in day.get("Groups", []):
             by_service[group["Keys"][0]] = by_service.get(group["Keys"][0], 0.0) + float(
                 group["Metrics"]["UnblendedCost"]["Amount"])
+    since = activated.date().isoformat() if activated else "?"
+    if not by_service:
+        raise RuntimeError(f"no billed cost carries {tag_key}={tag_value} yet (tag active since {since}; Cost Explorer "
+                           f"only attributes costs incurred after activation, with up to ~24 h delay): unknown, not $0")
+    partial = bool(activated and activated > start)
     return {"period": [start.date().isoformat(), end.date().isoformat()], "tag": f"{tag_key}={tag_value}",
             "by_service_usd": {k: round(v, 4) for k, v in sorted(by_service.items())},
-            "total_usd": round(sum(by_service.values()), 4),
-            "note": "billed amounts (Cost Explorer, UnblendedCost); the tag must be activated as a cost-allocation tag"}
+            "total_usd": round(sum(by_service.values()), 4), "covers_from": since if partial else start.date().isoformat(),
+            "note": "billed amounts (Cost Explorer, UnblendedCost)" + (
+                f"; only costs since the tag activation ({since}) carry the tag: earlier sessions are not included"
+                if partial else "")}
 
 
 # --------------------------------------------------------------------------- baseline (manual containment)

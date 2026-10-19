@@ -118,20 +118,32 @@ def test_actual_cost_sums_billed_amounts_by_service_for_the_tag():
     class CE:
         status = "Active"
 
+        activated = "2026-09-01T00:00:00Z"
+        empty = False
+
         def list_cost_allocation_tags(self, TagKeys):
-            return {"CostAllocationTags": [{"TagKey": "Project", "Type": "UserDefined", "Status": self.status}]}
+            return {"CostAllocationTags": [{"TagKey": "Project", "Type": "UserDefined", "Status": self.status,
+                                            "LastUpdatedDate": self.activated}]}
 
         def get_cost_and_usage(self, **kw):
             self.kw = kw
             day = lambda ec2, s3: {"Groups": [  # noqa: E731
                 {"Keys": ["Amazon Elastic Compute Cloud - Compute"], "Metrics": {"UnblendedCost": {"Amount": ec2}}},
                 {"Keys": ["Amazon Simple Storage Service"], "Metrics": {"UnblendedCost": {"Amount": s3}}}]}
+            if self.empty:
+                return {"ResultsByTime": [{"Groups": []}, {"Groups": []}]}
             return {"ResultsByTime": [day("1.5", "0.01"), day("0.5", "0.02")]}
     ce = CE()
     out = src.actual_cost(ce, t(0), t(0) + timedelta(days=2))
     assert out["total_usd"] == 2.03 and out["by_service_usd"]["Amazon Elastic Compute Cloud - Compute"] == 2.0
     assert ce.kw["Filter"] == {"Tags": {"Key": "Project", "Values": ["siem-soar-lab"]}} and ce.kw["Granularity"] == "DAILY"
-    ce.status = "Inactive"  # the lab account on 2026-10-19: Cost Explorer answers nothing, which is not "$0"
+    assert "covers_from" in out and "earlier sessions" not in out["note"]
+    ce.activated = iso(t(0) + timedelta(hours=12))  # activated inside the period: earlier days are not covered
+    assert "earlier sessions are not included" in src.actual_cost(ce, t(0), t(0) + timedelta(days=2))["note"]
+    ce.empty = True  # the lab account right after activation (2026-10-19): nothing attributed yet, which is not "$0"
+    with pytest.raises(RuntimeError, match="unknown, not \$0"):
+        src.actual_cost(ce, t(0), t(0) + timedelta(days=2))
+    ce.empty, ce.status = False, "Inactive"  # before activation
     with pytest.raises(RuntimeError, match="unknown, not \$0"):
         src.actual_cost(ce, t(0), t(0) + timedelta(days=2))
 
