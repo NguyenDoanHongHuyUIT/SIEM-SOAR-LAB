@@ -38,6 +38,8 @@ SCENARIO_SOURCES = {"guardduty", "wazuh", "suricata"}
 PLACEHOLDERS = {"run_id", "short", "manager_ip", "sensor_ip"}
 MITRE_ID_RE = re.compile(r"^T\d{4}(?:\.\d{3})?$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+# the runner decides some cases itself (robustness scripts, ground-truth closures) as "sim:[ground-truth:]<run_id>"
+SIM_ACTOR_RE = re.compile(r"^sim:(?:ground-truth:)?(run-[\w-]+)$")
 UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$")
 STRATUS_DOC = "https://stratus-red-team.cloud/attack-techniques/AWS/{technique}/"
 
@@ -217,10 +219,13 @@ def _iso(value):
 def case_in_run(case: dict, run: dict) -> bool:
     """A case belongs to a run when it carries the run's run_id, or was created on the run's target (resource id or
     the Wazuh agent name it was resolved from) inside [start - 5 s, end + settle]. Runs without a target (cloud
-    procedures) match on the window only."""
+    procedures) match on the window only. A case the runner decided itself names its run in the actor: that is exact,
+    whereas back-to-back runs on one host have overlapping windows."""
     from datetime import timedelta
     if case.get("run_id"):
         return case["run_id"] == run.get("run_id")
+    if m := SIM_ACTOR_RE.match(str(case.get("approver") or "")):
+        return m.group(1) == run.get("run_id")
     start, end, created = _iso(run.get("started_at")), _iso(run.get("ended_at")), _iso(case.get("created_at"))
     if not (start and end and created):
         return False

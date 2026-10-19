@@ -74,7 +74,7 @@ def attribute(case: dict, runs: list[dict]) -> tuple[dict | None, dict | None]:
 
 
 def _human_fp(case: dict) -> bool:
-    by_sim = str(case.get("approver", "")).startswith(GROUND_TRUTH_ACTOR)
+    by_sim = str(case.get("approver", "")).startswith("sim:")  # ground truth or a robustness script, not an analyst
     return not by_sim and (case["status"] == "DISMISSED" or case.get("verdict") == "false_positive")
 
 
@@ -92,9 +92,10 @@ def execution_failed(run: dict) -> bool:
 def classify(cases: list[dict], runs: list[dict], canary_rules: frozenset[str] = frozenset()) -> dict:
     """Case-layer labelling against the runs' ground truth. Returns per-rule counters and per-case labels.
 
-    Not evidence: GuardDuty sample findings (`sample: true`), cases of runs whose execution failed, and runs scoped
-    `pipeline_only`. `canary_rules` (metadata `canary: true`) detect a marker the simulation writes itself: reported
-    separately, never counted as TP/FP/FN.
+    Not evidence: GuardDuty sample findings (`sample: true`), cases of runs whose execution failed, runs scoped
+    `pipeline_only`, and robustness runs (they test the workflow with scripted decisions and injected faults).
+    `canary_rules` (metadata `canary: true`) detect a marker the simulation writes itself: reported separately, never
+    counted as TP/FP/FN.
     """
     rules: dict[str, dict] = {}
     labels: dict[str, str] = {}
@@ -121,6 +122,9 @@ def classify(cases: list[dict], runs: list[dict], canary_rules: frozenset[str] =
             continue
         if run and run.get("evaluation_scope") == "pipeline_only":
             labels[c["case_id"]] = "pipeline_only"
+            continue
+        if run and run.get("kind") == "robustness":
+            labels[c["case_id"]] = "robustness"
             continue
         if run and run["run_id"] in invalid:
             labels[c["case_id"]] = "invalid_run"
@@ -320,8 +324,12 @@ def compute_metrics(cases: list[dict], runs: list[dict], rules_meta: dict | None
             "alerts": total_alerts, "cases": len(measured_cases),
             "reduction": round(1 - len(measured_cases) / total_alerts, 3) if total_alerts else None},
         "rule_deployment_lead_time_s": summary(lead),
-        "robustness": {"runs": len(robustness), "passed": sum(1 for r in robustness if r.get("result", {}).get("pass")),
+        # a run the harness could not carry out (e.g. its own setup error) tested nothing: listed, not scored
+        "robustness": {"runs": sum(1 for r in robustness if not execution_failed(r)),
+                       "passed": sum(1 for r in robustness if r.get("result", {}).get("pass")),
+                       "not_executed": sum(1 for r in robustness if execution_failed(r)),
                        "detail": [{"run": r["run_id"], "scenario": r["scenario"], "pass": r.get("result", {}).get("pass"),
+                                   "executed": not execution_failed(r),
                                    "checks": r.get("result", {}).get("checks", [])} for r in robustness]},
         "operating_cost": cost or {"available": False, "note": "no cost data: run without --offline so that "
                                    "CloudTrail, the Pricing API and Cost Explorer can be queried"},
@@ -408,9 +416,12 @@ def render_markdown(m: dict) -> str:
           f"- {m['alert_duplication_reduction']['alerts']} alert → {m['alert_duplication_reduction']['cases']} case "
           f"(giảm {m['alert_duplication_reduction']['reduction']})", "",
           "## Rule deployment lead time", "", f"- {_fmt(m['rule_deployment_lead_time_s'])}", "",
-          "## Robustness", "", f"- Đạt {m['robustness']['passed']}/{m['robustness']['runs']} kịch bản"]
+          "## Robustness", "", f"- Đạt {m['robustness']['passed']}/{m['robustness']['runs']} lượt chạy"
+          + (f" ({m['robustness'].get('not_executed')} lượt không thực thi được do lỗi công cụ, không tính)"
+             if m["robustness"].get("not_executed") else "")]
     for r in m["robustness"]["detail"]:
-        L.append(f"  - {r['scenario']}: {'PASS' if r['pass'] else 'FAIL'}")
+        verdict = ("PASS" if r["pass"] else "FAIL") if r.get("executed", True) else "không thực thi (lỗi công cụ)"
+        L.append(f"  - {r['scenario']} ({r['run']}): {verdict}")
     L += ["", "## Chi phí vận hành mỗi phiên", ""] + _render_cost(m["operating_cost"]) + [
         "", "## So sánh baseline (GuardDuty email + cách ly thủ công)", ""]
     b = m["baseline_comparison"]

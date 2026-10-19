@@ -1,4 +1,5 @@
-"""Enrichment + risk scoring. Also downgrades the plan when the target does not exist (e.g. GuardDuty samples)."""
+"""Enrichment + risk scoring. Also downgrades the plan to notify-only when the target does not exist (e.g. GuardDuty
+samples) or lies outside the containment scope (protected, not zone=workload, IAM user without the lab prefix)."""
 
 from __future__ import annotations
 
@@ -9,28 +10,41 @@ from siemsoar.schema import PLAN_EC2, PLAN_IAM, PLAN_NONE, compute_risk
 
 from handlers._common import config_of, load
 
+NOTIFY_ONLY = {"type": PLAN_NONE, "params": {}}
+
 
 def _enrich_ec2(case: dict, plan: dict) -> tuple[dict, dict, bool, str]:
+    cfg = settings()
     try:
         info = response.describe_instance(plan["params"]["instance_id"])
     except response.NotFound:
-        return {}, {"type": PLAN_NONE, "params": {}}, False, "target instance not found"
+        return {}, NOTIFY_ONLY, False, "target instance not found"
     tags = info["tags"]
     enrichment = {"name": info["name"], "state": info["state"], "vpc_id": info["vpc_id"],
                   "criticality": tags.get("criticality", "medium"), "owner": tags.get("owner"),
-                  "zone": tags.get(settings().zone_tag), "internet_exposed": bool(info["public_ip"]),
+                  "zone": tags.get(cfg.zone_tag), "internet_exposed": bool(info["public_ip"]),
                   "security_groups": info["security_groups"]}
+    # The same scope preflight enforces, applied before the human is asked: an approval for an action preflight must
+    # refuse is a decision that cannot be carried out. Preflight still re-checks (state may change while waiting).
+    if tags.get(cfg.protected_tag, "").lower() == "true":
+        return enrichment, NOTIFY_ONLY, True, f"instance carries {cfg.protected_tag}=true: notify only"
+    if tags.get(cfg.zone_tag) != "workload":
+        return enrichment, NOTIFY_ONLY, True, f"instance is not in zone=workload (tag {cfg.zone_tag}): notify only"
     return enrichment, plan, True, ""
 
 
 def _enrich_iam(case: dict, plan: dict) -> tuple[dict, dict, bool, str]:
-    user = plan["params"]["user_name"]
+    user, prefix = plan["params"]["user_name"], settings().iam_target_prefix
+    if not user.startswith(prefix):
+        # e.g. the operator's own key deleting a Stratus trail during cleanup: GuardDuty is right to report it, but the
+        # SOAR may only touch simulation identities (its IAM role cannot even read this user).
+        return {}, NOTIFY_ONLY, True, f"IAM user {user} is outside the containment scope (prefix {prefix!r}): notify only"
     try:
         keys = response.list_keys(user)
         tags = {t["Key"]: t["Value"] for t in aws.client("iam").list_user_tags(UserName=user)["Tags"]}
     except ClientError as err:
         if err.response["Error"]["Code"] == "NoSuchEntity":
-            return {}, {"type": PLAN_NONE, "params": {}}, False, "target IAM user not found"
+            return {}, NOTIFY_ONLY, False, "target IAM user not found"
         raise
     return ({"criticality": tags.get("criticality", "medium"), "owner": tags.get("owner"),
              "key_status": keys.get(plan["params"]["access_key_id"], "missing")}, plan, True, "")
