@@ -207,6 +207,18 @@ def test_scenario_hosts_are_validated(tmp_path):
             catalog.load_scenarios(tmp_path)
 
 
+def test_observe_alerts_filters_on_the_manager_and_validates_the_agent():
+    from datetime import UTC, datetime
+
+    from tools import observe_alerts as oa
+    cmd = oa.summary_command("i-0a429ed962b37be8d", datetime(2026, 10, 19, 9, 26, 50, tzinfo=UTC),
+                             datetime(2026, 10, 19, 9, 31, 16, tzinfo=UTC))
+    assert '.timestamp >= "2026-10-19T09:26:45"' in cmd and '.timestamp <= "2026-10-19T09:31:16"' in cmd
+    assert "group_by(.id)" in cmd and ".data.audit.command" in cmd and ".syscheck.path" in cmd
+    with pytest.raises(ValueError, match="EC2 instance id"):
+        oa.summary_command('i-1" or true', datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 1, tzinfo=UTC))
+
+
 def test_a_cloud_target_has_no_siem_layer_to_read():
     r = object.__new__(runner.Runner)
     r.ssm_run = lambda *a, **k: pytest.fail("no Wazuh query for an IAM key target")

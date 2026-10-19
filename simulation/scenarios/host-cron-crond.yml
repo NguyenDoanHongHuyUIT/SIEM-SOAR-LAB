@@ -1,0 +1,15 @@
+id: host-cron-crond
+title: Persistence - script in /etc/cron.d (Atomic Red Team T1053.003 test 3)
+kind: atomic
+target: sensor
+malicious: true
+atomic:
+  technique: T1053.003
+  test_guid: 078e69eb-d9fb-450e-b9d0-2e118217c846
+  ref: 388942adbd9641f4dfdcf079d7efe9a75ec0ac43
+  timeout: 120
+verify:
+  - 'test -s /etc/cron.d/persistevil'
+expect: []   # observation: no SIEMSOAR rule yet. The audit/FIM events of these runs are the basis of the
+             # rules written next (shadow first); until then the technique counts as exercised, not detected.
+settle_seconds: 120

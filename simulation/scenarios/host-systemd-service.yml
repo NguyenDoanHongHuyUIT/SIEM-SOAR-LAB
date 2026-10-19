@@ -1,0 +1,15 @@
+id: host-systemd-service
+title: Persistence - create a systemd service (Atomic Red Team T1543.002 test 1)
+kind: atomic
+target: sensor
+malicious: true
+atomic:
+  technique: T1543.002
+  test_guid: d9e4f24f-aa67-4c6e-bcbf-85622b697a7c
+  ref: 388942adbd9641f4dfdcf079d7efe9a75ec0ac43
+  timeout: 120
+verify:
+  - 'test -s /etc/systemd/system/art-systemd-service.service'
+expect: []   # observation: no SIEMSOAR rule yet. The audit/FIM events of these runs are the basis of the
+             # rules written next (shadow first); until then the technique counts as exercised, not detected.
+settle_seconds: 120
