@@ -1,0 +1,29 @@
+id: wazuh-100141
+engine: wazuh
+rule_id: 100141
+name: Systemd unit added or changed
+state: shadow
+response: ec2_isolate
+mitre: [T1543.002]
+wraps: [550, 554]
+references:
+  - https://attack.mitre.org/techniques/T1543/002/
+  - https://github.com/redcanaryco/atomic-red-team/blob/388942adbd9641f4dfdcf079d7efe9a75ec0ac43/atomics/T1543.002/T1543.002.md
+  - https://documentation.wazuh.com/current/user-manual/capabilities/file-integrity/index.html
+  - https://github.com/wazuh/wazuh/blob/v4.14.8/ruleset/rules/0015-ossec_rules.xml
+tactic: Persistence, Privilege Escalation   # ATT&CK v20 kill_chain_phases of T1543.002
+owner: nguyen-doan-hong-huy
+created: 2026-10-20
+data_source: Wazuh syscheck (FIM) on /etc/systemd/system
+description: >
+  A unit file under /etc/systemd/system was added or changed. Observed on the lab: FIM 554 on
+  /etc/systemd/system/art-systemd-service.service (Atomic T1543.002 #1).
+expected_fp: >
+  Administrators adding or overriding services; packages writing drop-ins there.
+tests:
+  - name: unit added (Atomic T1543.002 #1 on the lab)
+    expect: match
+    fim: {path: /etc/systemd/system/art-systemd-service.service, type: added}
+  - name: a unit shipped by a package (not under /etc)
+    expect: no_match
+    fim: {path: /usr/lib/systemd/system/cron.service, type: modified}

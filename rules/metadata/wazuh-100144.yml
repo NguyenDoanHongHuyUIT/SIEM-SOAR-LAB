@@ -1,0 +1,38 @@
+id: wazuh-100144
+engine: wazuh
+rule_id: 100144
+name: SetUID or SetGID bit set with chmod
+state: shadow
+response: ec2_isolate
+mitre: [T1548.001]
+wraps: [80792]
+references:
+  - https://attack.mitre.org/techniques/T1548/001/
+  - https://github.com/redcanaryco/atomic-red-team/blob/388942adbd9641f4dfdcf079d7efe9a75ec0ac43/atomics/T1548.001/T1548.001.md
+  - https://documentation.wazuh.com/current/user-manual/capabilities/system-calls-monitoring/use-cases/monitoring-commands-run-as-root.html
+  - https://github.com/wazuh/wazuh/blob/v4.14.8/ruleset/rules/0365-auditd_rules.xml
+tactic: Privilege Escalation   # ATT&CK v20 kill_chain_phases of T1548.001
+owner: nguyen-doan-hong-huy
+created: 2026-10-20
+data_source: Linux audit (execve by euid 0, agent/siemsoar.rules) via Wazuh rule 80792
+description: >
+  chmod run as root with a mode that sets the SetUID or SetGID bit (symbolic +s, or 4xxx/2xxx/6xxx), in any
+  argument position. Observed on the lab: chmod u+xs and chmod g+xs on /tmp/evilBinary (Atomic T1548.001 #3, #5).
+expected_fp: >
+  Packages and administrators installing setuid helpers (rare outside package installs).
+tests:
+  - name: chmod u+xs (Atomic T1548.001 #3, recorded on the lab)
+    expect: match
+    log_format: audit
+    location: /var/log/audit/audit.log
+    log: "type=SYSCALL msg=audit(1792430846.987:2423): arch=c000003e syscall=59 success=yes exit=0 a0=58a3809d78b8 a1=58a3809cb660 a2=58a3809db9c0 a3=0 items=2 ppid=2399 pid=2400 auid=4294967295 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=(none) ses=4294967295 comm=\"chmod\" exe=\"/usr/bin/chmod\" subj=snap.amazon-ssm-agent.amazon-ssm-agent key=\"audit-wazuh-c\"\u001dARCH=x86_64 SYSCALL=execve AUID=\"unset\" UID=\"root\" GID=\"root\" EUID=\"root\" SUID=\"root\" FSUID=\"root\" EGID=\"root\" SGID=\"root\" FSGID=\"root\" type=EXECVE msg=audit(1792430846.987:2423): argc=3 a0=\"chmod\" a1=\"u+xs\" a2=\"/tmp/evilBinary\" type=CWD msg=audit(1792430846.987:2423): cwd=\"/var/snap/amazon-ssm-agent/13349\" type=PATH msg=audit(1792430846.987:2423): item=0 name=\"/usr/bin/chmod\" inode=1537 dev=103:01 mode=0100755 ouid=0 ogid=0 rdev=00:00 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0\u001dOUID=\"root\" OGID=\"root\" type=PATH msg=audit(1792430846.987:2423): item=1 name=\"/lib64/ld-linux-x86-64.so.2\" inode=4973 dev=103:01 mode=0100755 ouid=0 ogid=0 rdev=00:00 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0\u001dOUID=\"root\" OGID=\"root\" type=PROCTITLE msg=audit(1792430846.987:2423): proctitle=63686D6F6400752B7873002F746D702F6576696C42696E617279"
+  - name: chmod g+xs (Atomic T1548.001 #5, recorded on the lab)
+    expect: match
+    log_format: audit
+    location: /var/log/audit/audit.log
+    log: "type=SYSCALL msg=audit(1792430991.227:2493): arch=c000003e syscall=59 success=yes exit=0 a0=568cf99738b8 a1=568cf9967660 a2=568cf99779c0 a3=0 items=2 ppid=2451 pid=2452 auid=4294967295 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=(none) ses=4294967295 comm=\"chmod\" exe=\"/usr/bin/chmod\" subj=snap.amazon-ssm-agent.amazon-ssm-agent key=\"audit-wazuh-c\"\u001dARCH=x86_64 SYSCALL=execve AUID=\"unset\" UID=\"root\" GID=\"root\" EUID=\"root\" SUID=\"root\" FSUID=\"root\" EGID=\"root\" SGID=\"root\" FSGID=\"root\" type=EXECVE msg=audit(1792430991.227:2493): argc=3 a0=\"chmod\" a1=\"g+xs\" a2=\"/tmp/evilBinary\" type=CWD msg=audit(1792430991.227:2493): cwd=\"/var/snap/amazon-ssm-agent/13349\" type=PATH msg=audit(1792430991.227:2493): item=0 name=\"/usr/bin/chmod\" inode=1537 dev=103:01 mode=0100755 ouid=0 ogid=0 rdev=00:00 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0\u001dOUID=\"root\" OGID=\"root\" type=PATH msg=audit(1792430991.227:2493): item=1 name=\"/lib64/ld-linux-x86-64.so.2\" inode=4973 dev=103:01 mode=0100755 ouid=0 ogid=0 rdev=00:00 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0\u001dOUID=\"root\" OGID=\"root\" type=PROCTITLE msg=audit(1792430991.227:2493): proctitle=63686D6F6400672B7873002F746D702F6576696C42696E617279"
+  - name: chmod -- 640 by the system (recorded on the lab)
+    expect: no_match
+    log_format: audit
+    location: /var/log/audit/audit.log
+    log: "type=SYSCALL msg=audit(1792429136.026:496): arch=c000003e syscall=59 success=yes exit=0 a0=5f0f2353dfa8 a1=5f0f2353df50 a2=5f0f2353df78 a3=8 items=2 ppid=410 pid=822 auid=4294967295 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=(none) ses=4294967295 comm=\"chmod\" exe=\"/usr/bin/chmod\" subj=unconfined key=\"audit-wazuh-c\"\u001dARCH=x86_64 SYSCALL=execve AUID=\"unset\" UID=\"root\" GID=\"root\" EUID=\"root\" SUID=\"root\" FSUID=\"root\" EGID=\"root\" SGID=\"root\" FSGID=\"root\" type=EXECVE msg=audit(1792429136.026:496): argc=4 a0=\"chmod\" a1=\"--\" a2=\"640\" a3=\"/var/log//dmesg.1.gz\" type=CWD msg=audit(1792429136.026:496): cwd=\"/\" type=PATH msg=audit(1792429136.026:496): item=0 name=\"/usr/bin/chmod\" inode=1537 dev=103:01 mode=0100755 ouid=0 ogid=0 rdev=00:00 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0\u001dOUID=\"root\" OGID=\"root\" type=PATH msg=audit(1792429136.026:496): item=1 name=\"/lib64/ld-linux-x86-64.so.2\" inode=4973 dev=103:01 mode=0100755 ouid=0 ogid=0 rdev=00:00 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0\u001dOUID=\"root\" OGID=\"root\" type=PROCTITLE msg=audit(1792429136.026:496): proctitle=63686D6F64002D2D00363430002F7661722F6C6F672F2F646D6573672E312E677A"

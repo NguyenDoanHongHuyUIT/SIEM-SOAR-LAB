@@ -1,0 +1,39 @@
+id: wazuh-100143
+engine: wazuh
+rule_id: 100143
+name: Shell history file deleted or emptied
+state: shadow
+response: ec2_isolate
+mitre: [T1070.003]
+wraps: [80792]
+references:
+  - https://attack.mitre.org/techniques/T1070/003/
+  - https://github.com/redcanaryco/atomic-red-team/blob/388942adbd9641f4dfdcf079d7efe9a75ec0ac43/atomics/T1070.003/T1070.003.md
+  - https://documentation.wazuh.com/current/user-manual/capabilities/system-calls-monitoring/use-cases/monitoring-commands-run-as-root.html
+  - https://github.com/wazuh/wazuh/blob/v4.14.8/ruleset/rules/0365-auditd_rules.xml
+tactic: Stealth   # ATT&CK v20 kill_chain_phases of T1070.003
+owner: nguyen-doan-hong-huy
+created: 2026-10-20
+data_source: Linux audit (execve by euid 0, agent/siemsoar.rules) via Wazuh rule 80792
+description: >
+  rm, truncate, shred or unlink run as root with a *_history file as argument. Observed on the lab: rm
+  /root/.bash_history (Atomic T1070.003 #1) and truncate -s0 /root/.bash_history (#5). Variants that empty the
+  file through a shell redirection (#2, #3) start no such command and are not seen by this rule.
+expected_fp: >
+  An administrator clearing their own history on purpose.
+tests:
+  - name: rm of root's history (Atomic T1070.003 #1, recorded on the lab)
+    expect: match
+    log_format: audit
+    location: /var/log/audit/audit.log
+    log: "type=SYSCALL msg=audit(1792429971.652:2187): arch=c000003e syscall=59 success=yes exit=0 a0=6387663dcbd8 a1=63875cdd0740 a2=6387663dcac8 a3=8 items=2 ppid=2122 pid=2123 auid=4294967295 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=(none) ses=4294967295 comm=\"rm\" exe=\"/usr/bin/rm\" subj=snap.amazon-ssm-agent.amazon-ssm-agent key=\"audit-wazuh-c\"\u001dARCH=x86_64 SYSCALL=execve AUID=\"unset\" UID=\"root\" GID=\"root\" EUID=\"root\" SUID=\"root\" FSUID=\"root\" EGID=\"root\" SGID=\"root\" FSGID=\"root\" type=EXECVE msg=audit(1792429971.652:2187): argc=2 a0=\"rm\" a1=\"/root/.bash_history\" type=CWD msg=audit(1792429971.652:2187): cwd=\"/var/snap/amazon-ssm-agent/13349\" type=PATH msg=audit(1792429971.652:2187): item=0 name=\"/usr/bin/rm\" inode=1585 dev=103:01 mode=0100755 ouid=0 ogid=0 rdev=00:00 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0\u001dOUID=\"root\" OGID=\"root\" type=PATH msg=audit(1792429971.652:2187): item=1 name=\"/lib64/ld-linux-x86-64.so.2\" inode=4973 dev=103:01 mode=0100755 ouid=0 ogid=0 rdev=00:00 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0\u001dOUID=\"root\" OGID=\"root\" type=PROCTITLE msg=audit(1792429971.652:2187): proctitle=726D002F726F6F742F2E626173685F686973746F7279"
+  - name: truncate of root's history (Atomic T1070.003 #5, recorded on the lab)
+    expect: match
+    log_format: audit
+    location: /var/log/audit/audit.log
+    log: "type=SYSCALL msg=audit(1792430119.779:2223): arch=c000003e syscall=59 success=yes exit=0 a0=638add98bbd8 a1=638aa1f5e798 a2=638add98bac8 a3=8 items=2 ppid=2178 pid=2179 auid=4294967295 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=(none) ses=4294967295 comm=\"truncate\" exe=\"/usr/bin/truncate\" subj=snap.amazon-ssm-agent.amazon-ssm-agent key=\"audit-wazuh-c\"\u001dARCH=x86_64 SYSCALL=execve AUID=\"unset\" UID=\"root\" GID=\"root\" EUID=\"root\" SUID=\"root\" FSUID=\"root\" EGID=\"root\" SGID=\"root\" FSGID=\"root\" type=EXECVE msg=audit(1792430119.779:2223): argc=3 a0=\"truncate\" a1=\"-s0\" a2=\"/root/.bash_history\" type=CWD msg=audit(1792430119.779:2223): cwd=\"/var/snap/amazon-ssm-agent/13349\" type=PATH msg=audit(1792430119.779:2223): item=0 name=\"/usr/bin/truncate\" inode=1764 dev=103:01 mode=0100755 ouid=0 ogid=0 rdev=00:00 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0\u001dOUID=\"root\" OGID=\"root\" type=PATH msg=audit(1792430119.779:2223): item=1 name=\"/lib64/ld-linux-x86-64.so.2\" inode=4973 dev=103:01 mode=0100755 ouid=0 ogid=0 rdev=00:00 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0\u001dOUID=\"root\" OGID=\"root\" type=PROCTITLE msg=audit(1792430119.779:2223): proctitle=7472756E63617465002D7330002F726F6F742F2E626173685F686973746F7279"
+  - name: rm of another file (recorded on the lab)
+    expect: no_match
+    log_format: audit
+    location: /var/log/audit/audit.log
+    log: "type=SYSCALL msg=audit(1792405369.632:1011): arch=c000003e syscall=59 success=yes exit=0 a0=5b6ba8221b48 a1=5b6ba8221ae8 a2=5b6ba8221b08 a3=8 items=2 ppid=6794 pid=7141 auid=4294967295 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=(none) ses=4294967295 comm=\"rm\" exe=\"/usr/bin/rm\" subj=unconfined key=\"audit-wazuh-c\"\u001dARCH=x86_64 SYSCALL=execve AUID=\"unset\" UID=\"root\" GID=\"root\" EUID=\"root\" SUID=\"root\" FSUID=\"root\" EGID=\"root\" SGID=\"root\" FSGID=\"root\" type=EXECVE msg=audit(1792405369.632:1011): argc=3 a0=\"rm\" a1=\"-rf\" a2=\"/var/ossec/var/start-script-lock\" type=CWD msg=audit(1792405369.632:1011): cwd=\"/var/ossec/bin\" type=PATH msg=audit(1792405369.632:1011): item=0 name=\"/usr/bin/rm\" inode=1585 dev=103:01 mode=0100755 ouid=0 ogid=0 rdev=00:00 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0\u001dOUID=\"root\" OGID=\"root\" type=PATH msg=audit(1792405369.632:1011): item=1 name=\"/lib64/ld-linux-x86-64.so.2\" inode=4973 dev=103:01 mode=0100755 ouid=0 ogid=0 rdev=00:00 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0\u001dOUID=\"root\" OGID=\"root\" type=PROCTITLE msg=audit(1792405369.632:1011): proctitle=726D002D7266002F7661722F6F737365632F7661722F73746172742D7363726970742D6C6F636B"

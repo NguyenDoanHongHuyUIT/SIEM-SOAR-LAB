@@ -1,0 +1,32 @@
+id: wazuh-100142
+engine: wazuh
+rule_id: 100142
+name: Shell start-up file changed
+state: shadow
+response: ec2_isolate
+mitre: [T1546.004]
+wraps: [550, 554]
+references:
+  - https://attack.mitre.org/techniques/T1546/004/
+  - https://github.com/redcanaryco/atomic-red-team/blob/388942adbd9641f4dfdcf079d7efe9a75ec0ac43/atomics/T1546.004/T1546.004.md
+  - https://documentation.wazuh.com/current/user-manual/capabilities/file-integrity/index.html
+  - https://github.com/wazuh/wazuh/blob/v4.14.8/ruleset/rules/0015-ossec_rules.xml
+tactic: Persistence, Privilege Escalation   # ATT&CK v20 kill_chain_phases of T1546.004
+owner: nguyen-doan-hong-huy
+created: 2026-10-20
+data_source: Wazuh syscheck (FIM) on the system and root shell start-up files
+description: >
+  A shell start-up file was changed: commands in it run at every login. Observed on the lab: FIM 550 on
+  /root/.bashrc (Atomic T1546.004 #2) and /etc/profile (T1546.004 #4).
+expected_fp: >
+  An administrator customising the shell; base-files or bash package updates.
+tests:
+  - name: root .bashrc changed (Atomic T1546.004 #2 on the lab)
+    expect: match
+    fim: {path: /root/.bashrc}
+  - name: system profile changed (Atomic T1546.004 #4 on the lab)
+    expect: match
+    fim: {path: /etc/profile}
+  - name: another file in /etc
+    expect: no_match
+    fim: {path: /etc/hosts}

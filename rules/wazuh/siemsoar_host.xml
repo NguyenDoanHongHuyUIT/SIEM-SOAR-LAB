@@ -54,6 +54,35 @@
     </mitre>
   </rule>
 
+  <!-- Persistence locations, from the FIM events of the Atomic observation runs (lab 2026-10-19): a cron entry
+       (T1053.003 #3, #4), a systemd unit (T1543.002 #1), shell start-up files (T1546.004 #2, #4). -->
+  <rule id="100140" level="10">
+    <if_sid>550,554</if_sid>
+    <field name="file">^/etc/cron.d/|^/var/spool/cron/crontabs/|^/etc/crontab$</field>
+    <description>SIEMSOAR: cron job added or changed</description>
+    <mitre>
+      <id>T1053.003</id>
+    </mitre>
+  </rule>
+
+  <rule id="100141" level="10">
+    <if_sid>550,554</if_sid>
+    <field name="file">^/etc/systemd/system/</field>
+    <description>SIEMSOAR: systemd unit added or changed</description>
+    <mitre>
+      <id>T1543.002</id>
+    </mitre>
+  </rule>
+
+  <rule id="100142" level="10">
+    <if_sid>550,554</if_sid>
+    <field name="file">^/etc/profile$|^/etc/bash.bashrc$|^/etc/profile.d/|^/root/.bashrc$|^/root/.profile$|^/root/.bash_profile$|^/root/.bash_logout$</field>
+    <description>SIEMSOAR: shell start-up file changed</description>
+    <mitre>
+      <id>T1546.004</id>
+    </mitre>
+  </rule>
+
   <!-- Lab-specific: a deception (canary) directory no official rule knows about. -->
   <rule id="100101" level="7">
     <if_sid>550,554</if_sid>
@@ -103,6 +132,42 @@
     <description>SIEMSOAR: SSH brute force with non-existent accounts</description>
     <mitre>
       <id>T1110</id>
+    </mitre>
+  </rule>
+</group>
+
+<group name="siemsoar,audit,">
+  <!-- On the official audit rules (0365-auditd_rules.xml): 80792 = a command executed with root privileges, 80784 = a
+       read of a watched file (agent/siemsoar.rules). Conditions and tests come from the events the Atomic
+       observation runs produced on the lab (2026-10-19); arguments are matched in the EXECVE record of the event,
+       whatever their position (a real chmod with a leading end-of-options marker puts the mode in a2). -->
+  <rule id="100143" level="10">
+    <if_sid>80792</if_sid>
+    <field name="audit.command" type="pcre2">^(rm|truncate|shred|unlink)$</field>
+    <match type="pcre2"> a\d+="[^"]*_history"</match>
+    <description>SIEMSOAR: shell history file deleted or emptied</description>
+    <mitre>
+      <id>T1070.003</id>
+    </mitre>
+  </rule>
+
+  <rule id="100144" level="10">
+    <if_sid>80792</if_sid>
+    <field name="audit.command">^chmod$</field>
+    <match type="pcre2"> a\d+="([ugoa]*[+=][rwxXt]*s[rwxXt]*|0?[2-7][0-7]{3})"</match>
+    <description>SIEMSOAR: SetUID or SetGID bit set with chmod</description>
+    <mitre>
+      <id>T1548.001</id>
+    </mitre>
+  </rule>
+
+  <rule id="100145" level="10">
+    <if_sid>80784</if_sid>
+    <field name="audit.file.name" type="pcre2">^/etc/g?shadow$</field>
+    <field name="audit.exe" type="pcre2" negate="yes">^(/var/ossec/bin/wazuh-(modulesd|syscheckd)|/usr/bin/sudo|/usr/sbin/cron|/usr/bin/passwd)$</field>
+    <description>SIEMSOAR: credential store read by a program that normally does not read it</description>
+    <mitre>
+      <id>T1003.008</id>
     </mitre>
   </rule>
 </group>
