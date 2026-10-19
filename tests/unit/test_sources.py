@@ -129,9 +129,12 @@ def test_actual_cost_sums_billed_amounts_by_service_for_the_tag():
 
 
 # ------------------------------------------------------------------ baseline
-def human(when, name, who="arn:aws:iam::1:user/analyst", ro=False, **params):
-    return {"eventTime": iso(when), "eventName": name, "readOnly": ro, "userIdentity": {"arn": who},
-            "requestParameters": params}
+def human(when, name, who="arn:aws:iam::1:user/analyst", ro=False, console=True, **params):
+    record = {"eventTime": iso(when), "eventName": name, "readOnly": ro, "userIdentity": {"arn": who},
+              "requestParameters": params}
+    if console:
+        record["sessionCredentialFromConsole"] = "true"
+    return record
 
 
 def test_baseline_measures_the_first_human_containment_call_and_counts_the_clicks():
@@ -142,7 +145,8 @@ def test_baseline_measures_the_first_human_containment_call_and_counts_the_click
         human(t(10, 2), "DescribeInstances", ro=True, instanceId="i-0abc"),                 # read-only: not a step
         human(t(10, 3), "CreateSecurityGroup", groupName="isolate"),                         # a step
         human(t(10, 6), "ModifyInstanceAttribute", instanceId="i-0abc"),                     # the containment
-        human(t(10, 1), "ModifyInstanceAttribute", who=soar, instanceId="i-0abc"),           # SOAR: never the baseline
+        human(t(10, 1), "ModifyInstanceAttribute", who=soar, console=False, instanceId="i-0abc"),  # SOAR: never
+        human(t(10, 4), "CreateSecurityGroup", console=False, groupName="x"),                # same user, a script
         human(t(10, 7), "ModifyInstanceAttribute", who="arn:aws:iam::1:user/other", instanceId="i-zzz"),
     ]
     [row] = src.baseline_rows([finding], events)
@@ -155,6 +159,12 @@ def test_baseline_ignores_findings_nobody_contained_and_actions_outside_the_wind
     late = human(t(10) + src.BASELINE_WINDOW + timedelta(minutes=1), "StopInstances", instanceId="i-1")
     early = human(t(9), "StopInstances", instanceId="i-1")
     assert src.baseline_rows([finding], [late, early]) == []
+    # the simulation runner deletes the previous victim key with the operator's credentials: an SDK call, not a person
+    runner_cleanup = human(t(10, 5), "DeleteAccessKey", console=False, userName="lab-victim", accessKeyId="AKIAX")
+    key_finding = {"id": "k", "type": "Stealth:IAMUser/CloudTrailLoggingDisabled", "created_at": iso(t(10)),
+                   "resources": {"lab-victim", "AKIAX"}}
+    assert src.baseline_rows([key_finding], [runner_cleanup]) == []
+    assert src.from_console({"sessionCredentialFromConsole": "true"}) and not src.from_console({})
     assert src.is_soar_principal({"userIdentity": {"arn": "arn:aws:sts::1:assumed-role/siemsoar-sfn-role/x"}})
     assert not src.is_soar_principal({"userIdentity": {"arn": "arn:aws:iam::1:user/analyst"}})
 

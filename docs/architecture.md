@@ -99,6 +99,20 @@ GSI: `resource-index (resource_id, created_at)`, `status-index (status, created_
 ## 5b. Chính sách là dữ liệu
 `src/lambdas/siemsoar/policy.toml` (đóng gói cùng Lambda, nạp và **kiểm tra** lúc khởi động bằng `tomllib`) chứa mọi phán đoán có thể thay đổi: thang severity của GuardDuty/Wazuh, finding nào được kèm response nào (theo `resourceType`/`userType`), ánh xạ ATT&CK (lấy từ MITRE CTID qua `guardduty_attack.json`, ghi đè cục bộ phải có `basis` + `reason`), trường ngữ cảnh lấy từ alert gốc (đường dẫn có thứ tự: `data.src_ip` rồi `data.srcip` …), khóa dedup, thứ tự phân giải agent→instance (`instance_id`, `private_ip`, `name_tag`; chỉ nhận khi **đúng một** kết quả) và trọng số rủi ro. Đổi nguồn dữ liệu hay chính sách = sửa file này, không sửa code; test kiểm file hợp lệ và mọi ID ATT&CK còn hiệu lực.
 
+### Tham số vận hành: quyết định thiết kế, không phải số đo
+Các giá trị dưới đây không có nguồn công bố. Chúng là lựa chọn của người vận hành, đặt trong Terraform
+(`infra/modules/serverless-core/variables.tf`) và được ghi lại ở đây kèm lý do và cách kiểm chứng.
+
+| Tham số | Giá trị | Lý do | Kiểm bằng |
+|---|---|---|---|
+| `approval_timeout_seconds` | 3600 | Một người trực có một giờ để quyết định; hết giờ thì case `EXPIRED`, không tự hành động (fail-safe) | Số đo `approval_wait_s` (lab: p50 91 s, max 690 s) |
+| `restore_timeout_seconds` | 86400 | Tài nguyên bị cách ly chờ quyết định khôi phục tối đa 1 ngày rồi giữ nguyên trạng thái an toàn | Robustness `mid-failure` |
+| `dedup_window_seconds` | 3600 | Alert cùng khóa trong 1 giờ gộp vào một case đang mở | `alert_duplication_reduction` |
+| `breaker_limit` / `breaker_window_seconds` | 3 / 3600 | Quá 3 lần cách ly mỗi giờ thì nghi rule nhiễu: tự động dừng, chờ người | Test `circuit_breaker` |
+| `stop_risk_threshold` | 85 | Chỉ stop máy khi rủi ro rất cao; SG stateful không cắt kết nối cũ (xem limitations) | Case lab: risk 65 → không stop |
+| `[risk]`, `[severity]` trong `policy.toml` | `basis = "analyst"` | Xếp thứ tự xử lý, không quyết định có hành động hay không | FP/TP đo được, `rulesctl tune` |
+| `settle_seconds` của kịch bản | 90–300 s (host/mạng), 1800 s (Stratus) | Thời gian runner chờ trước khi kết luận | `window_headroom` trong báo cáo (lab: phát hiện host muộn nhất < 1 s sau khi chạy xong) |
+
 ## 6. Nguyên tắc thiết kế → hiện thực
 
 | Nguyên tắc | Hiện thực |
