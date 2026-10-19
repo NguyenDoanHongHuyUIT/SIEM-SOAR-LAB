@@ -85,11 +85,12 @@ Triển khai thật (chi tiết từng bước, kể cả tạo Slack App: [docs
 | Logic case, dedup, token một lần, double-click, breaker, fail-safe, restore (mọi ENI), IAM key rotation idempotent, phân giải agent→instance | 280+ test với moto, workflow chạy đúng ASL + handler thật | Hành vi AWS thật (moto không mô phỏng hết ràng buộc IAM/SG) |
 | Rule Suricata | `suricata -T` + replay pcap **bắt từ thủ tục Atomic thật** bằng **Suricata thật** với rule ET Open ghim; pcap lành tính không được kích hoạt rule active; `eve_logtest`: alert EVE thật → rule Wazuh thật (id khai trong metadata, group `siemsoar_<state>`, MITRE) | Độ nhiễu trên traffic production |
 | Rule Wazuh | Job CI `wazuh-engine`: `wazuh-analysisd -t` + mọi test trong metadata (log thô qua logtest API, sự kiện FIM qua hàng đợi analysisd) trên image Wazuh 4.14.8 chính thức; chạy tay 23/23 PASS, kể cả rule bọc rule chính thức 5763/5712 với đúng ngưỡng 8 sự kiện | Hành vi theo thời gian thật của `frequency/timeframe` (engine đếm theo thời điểm nhận) |
-| Terraform | `fmt`, `validate`, `terraform test` (plan đầy đủ với provider mock, có/không có mặt phẳng lab) | `plan/apply` trên tài khoản thật |
-| Bootstrap Wazuh/Suricata | `bash -n` + shellcheck | Chạy thật trên Ubuntu 22.04 (cần tinh chỉnh theo phiên bản Wazuh) |
+| Terraform | `fmt`, `validate`, `terraform test`; **apply thật** qua GitHub Actions (OIDC, environment có người duyệt) | - |
+| Bootstrap Wazuh/Suricata | `bash -n` + shellcheck; **chạy thật** trên EC2 Ubuntu (Wazuh 4.14.8, Suricata 7.0) | - |
+| Toàn hệ thống trên AWS thật (3 phiên lab, 17–19/10/2026) | Atomic/Stratus → Wazuh/GuardDuty → case → Slack → người duyệt → cách ly EC2 / vô hiệu key IAM thật → evidence → restore; rollback rule shadow ↔ active; robustness (double-click, Slack hỏng, lỗi giữa chừng) | Baseline thủ công (chưa diễn tập); số lượt còn nhỏ |
 
-Nghĩa là: **phần phần mềm/logic đã được test kỹ; phần chạm hạ tầng thật cần chạy phiên đầu tiên với `dry_run=true`**
-và theo checklist trong runbook.
+Nghĩa là: logic được test tự động, và luồng đầu-cuối đã chạy trên AWS thật với quyết định của người. Số liệu nằm trong
+`reports/` (sinh từ DynamoDB/CloudTrail, không nhập tay); giới hạn ở [docs/limitations.md](docs/limitations.md).
 
 ## Nguồn gốc dữ liệu (không bịa)
 
@@ -119,7 +120,7 @@ và theo checklist trong runbook.
 | 5.2 nhóm 1–8 | bootstrap OIDC; Wazuh/agent; CloudTrail→S3 + GuardDuty→EventBridge; rule as code; case workflow/Slack/task token; response/restore; simulation/ground truth; vận hành/teardown (`export_evidence`) |
 | 5.4 Kịch bản | `simulation/scenarios/*.yml` |
 | 6.2 Chỉ số | `evaluation/evaluate.py` |
-| 6.3 Baseline | `evaluation/baseline.example.csv` + `evaluate` so sánh |
+| 6.3 Baseline | `evaluation/sources.py` (CloudTrail: lệnh cách ly từ Console của người) + `evaluate` so cùng khoảng finding → ngăn chặn |
 | 6.5 Giới hạn | [docs/limitations.md](docs/limitations.md) |
 
 **Điểm khác/bổ sung so với đề cương** (có chủ đích): (1) Wazuh đẩy alert *active* lên EventBridge bằng integration tự

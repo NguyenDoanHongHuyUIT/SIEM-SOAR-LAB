@@ -319,11 +319,47 @@ def test_percentiles_and_summary():
 def test_baseline_comparison():
     assert ev.baseline_comparison([], {"p50": 10})["available"] is False
     b = ev.baseline_comparison([{"seconds_to_contain": "300", "manual_steps": "9"},
-                                {"seconds_to_contain": "500", "manual_steps": "7"}], {"p50": 20.0})
+                                {"seconds_to_contain": "500", "manual_steps": "7"}], {"p50": 20.0, "n": 3})
     assert b["baseline_contain_p50_s"] == 400.0 and b["contain_time_delta_s"] == 380.0
+    assert b["drills"] == 2 and b["soar_cases"] == 3
     assert b["soar_manual_steps"] is None  # nothing observed: never assume a number
     b = ev.baseline_comparison([{"seconds_to_contain": "300", "manual_steps": "9"}], {"p50": 20.0}, [2, 2, 1])
     assert b["soar_manual_steps"] == 1.7
+
+
+def test_the_baseline_is_compared_with_the_whole_soar_response_not_the_automated_step():
+    """Session 3, real case: notified 01:49:44.8, approved 02:01:14.9 (the operator was busy), contained 02:01:22.0.
+    containment_seconds (7.1 s) starts at the approval; a manual response starts at the finding. The comparison uses
+    case -> contained (701.3 s), which includes the human reaction like the baseline does."""
+    case = _case(1, rule="R", source="guardduty", status="RESTORED", created="2026-10-19T01:49:40.697Z",
+                 notified_at="2026-10-19T01:49:44.805Z", approved_at="2026-10-19T02:01:14.881Z",
+                 isolated_at="2026-10-19T02:01:21.995Z", containment_seconds=7.11, restoring_at="2026-10-19T02:03:10Z")
+    m = ev.compute_metrics([case], [], {}, [{"seconds_to_contain": "900", "manual_steps": "4"}])
+    assert m["time_to_containment_s"]["p50"] == 7.11
+    assert m["approval_wait_s"]["p50"] == 690.08 and m["case_to_containment_s"]["p50"] == 701.3
+    b = m["baseline_comparison"]
+    assert b["soar_case_to_contained_p50_s"] == 701.3 and b["contain_time_delta_s"] == 198.7
+    assert b["soar_manual_steps"] == 2  # approve + restore, read from the case
+    assert "drills" in ev.compute_metrics([], [], {})["baseline_comparison"]
+
+
+def test_settle_windows_are_checked_against_the_measured_lag():
+    base = {"kind": "atomic", "malicious": True, "expect": [], "started_at": "2026-10-19T03:00:00Z",
+            "ended_at": "2026-10-19T03:00:10Z", "settle_seconds": 120, "target": "i-0abc1234def567890"}
+    fast = {**base, "run_id": "run-1", "scenario": "fast", "siem_alerts": [{"rule_id": "1", "timestamp":
+                                                                             "2026-10-19T03:00:14Z"}]}
+    slow = {**base, "run_id": "run-2", "scenario": "slow", "started_at": "2026-10-19T04:00:00Z",
+            "ended_at": "2026-10-19T04:00:10Z", "siem_alerts": [{"rule_id": "1", "timestamp": "2026-10-19T04:01:20Z"}]}
+    cloud = {**base, "run_id": "run-3", "scenario": "cloud", "kind": "stratus", "started_at": "2026-10-19T05:00:00Z",
+             "ended_at": "2026-10-19T05:01:00Z", "settle_seconds": 1800, "target": "lab-victim/AKIAIOSFODNN7EXAMPLE",
+             "target_unique": True}
+    late_case = _case(1, rule="R", source="guardduty", created="2026-10-19T05:40:00Z",
+                      resource_id="lab-victim/AKIAIOSFODNN7EXAMPLE")
+    w = ev.window_headroom([late_case], [fast, slow, cloud])
+    assert w["fast"] == {"runs": 1, "max_lag_s": 4.0, "settle_s": 120, "cut_off": True, "tight": False}
+    assert w["slow"]["max_lag_s"] == 70.0 and w["slow"]["tight"] is True        # used more than half the window
+    assert w["cloud"]["max_lag_s"] == 2340.0 and w["cloud"]["tight"] is False   # no cut-off: informative only
+    assert "SÁT" in ev.render_markdown(ev.compute_metrics([late_case], [fast, slow, cloud], {}))
 
 
 def test_manual_steps_are_read_from_the_case_timeline():
@@ -355,17 +391,6 @@ def test_baseline_inputs_must_be_numeric():
 def test_the_evaluator_holds_no_price_constants():
     assert not hasattr(ev, "PRICES") and not hasattr(ev, "estimate_cost")  # prices come from the Pricing API
 
-
-def test_csv_input_headers_and_extra_fields_are_validated(tmp_path):
-    path = tmp_path / "sessions.csv"
-    path.write_text("start,hours,manager_type,sensor_type,notes\n")
-    assert ev._read_csv(str(path), {"start", "hours", "manager_type", "sensor_type", "notes"}) == []
-    path.write_text("start,hours\n2026-10-06,4,extra\n")
-    with pytest.raises(ValueError, match="expected columns"):
-        ev._read_csv(str(path), {"start", "hours", "manager_type", "sensor_type", "notes"})
-    path.write_text("start,hours,manager_type,sensor_type,notes\n2026-10-06,4,t3.large,t3.small,extra,unexpected\n")
-    with pytest.raises(ValueError, match="more fields"):
-        ev._read_csv(str(path), {"start", "hours", "manager_type", "sensor_type", "notes"})
 
 
 def test_markdown_report_renders_all_sections():

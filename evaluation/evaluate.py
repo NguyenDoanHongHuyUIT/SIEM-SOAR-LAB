@@ -13,8 +13,11 @@ malicious, and which rules were expected. Two layers are scored separately, beca
 
 Cases closed by the simulation's own ground truth (`sim:ground-truth`) are never counted as human feedback.
 
-  python -m evaluation.evaluate [--prefix siemsoar] [--out reports] [--baseline evaluation/baseline.csv]
-                                [--days 30] [--offline cases.json runs.json]
+  python -m evaluation.evaluate [--prefix siemsoar] [--out reports] [--days 30] [--since ISO]
+                                [--offline cases.json runs.json]
+
+The baseline (manual response) is measured from CloudTrail only (evaluation/sources.py); there is no input for
+self-reported stopwatch times.
 
 compute_metrics() is pure (lists in, dict out) so it is unit tested without AWS.
 """
@@ -22,7 +25,6 @@ compute_metrics() is pure (lists in, dict out) so it is unit tested without AWS.
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import math
 import statistics
@@ -252,21 +254,53 @@ def attack_coverage(rules_meta: dict, runs: list[dict], labels: dict, cases: lis
             "coverage_of_exercised": round(len(detected & exercised) / len(exercised), 3) if exercised else None}
 
 
-def baseline_comparison(baseline: list[dict], containment: dict, soar_steps: list[int] | None = None) -> dict:
+def baseline_comparison(baseline: list[dict], soar_case_to_contained: dict,
+                        soar_steps: list[int] | None = None) -> dict:
+    """Manual response vs SOAR, on the same interval: from the moment the detection is available (baseline: the
+    GuardDuty finding is created; SOAR: the case is created from it) to containment. Both include the human reaction
+    time (noticing + deciding); the SOAR number is NOT the approval-to-containment time, which would compare an
+    automated step with a whole manual response."""
     secs = [_nonnegative_float(r["seconds_to_contain"], "seconds_to_contain") for r in baseline
             if r.get("seconds_to_contain") not in (None, "")]
     steps = [_nonnegative_float(r["manual_steps"], "manual_steps") for r in baseline
              if r.get("manual_steps") not in (None, "")]
     if not secs:
-        return {"available": False, "note": "no baseline measurements yet (evaluation/baseline.csv)"}
+        return {"available": False, "drills": 0,
+                "note": "no manual containment measured yet: needs console drills (docs/evaluation.md, Baseline)"}
     base_p50 = percentile(secs, 50)
-    soar_p50 = containment.get("p50")
-    return {"available": True, "baseline_contain_p50_s": base_p50, "soar_contain_p50_s": soar_p50,
+    soar_p50 = soar_case_to_contained.get("p50")
+    return {"available": True, "drills": len(secs), "baseline_contain_p50_s": base_p50,
+            "soar_case_to_contained_p50_s": soar_p50, "soar_cases": soar_case_to_contained.get("n", 0),
             "baseline_manual_steps_mean": round(statistics.fmean(steps), 1) if steps else None,
             "soar_manual_steps": round(statistics.fmean(soar_steps), 1) if soar_steps else None,
             "contain_time_delta_s": round(base_p50 - soar_p50, 2) if soar_p50 is not None else None,
-            "note": "SOAR containment time starts at the human approval; baseline starts at the email. "
-                    "Compare it with `seconds_to_notice` + approval latency, not as a pure speed-up."}
+            "note": "both from detection available to containment, human reaction included"}
+
+
+def window_headroom(cases: list[dict], runs: list[dict]) -> dict:
+    """Per scenario: the latest detection after a run ended (SIEM alert or attributed case) vs its settle window.
+
+    The settle windows are an operator choice; this checks them against what was measured. A window is `tight` when
+    the slowest observed detection used more than half of it: a slower one next time could fall outside and become a
+    false negative. Runs with a run-specific target have no cut-off (catalog.case_in_run), their lag is informative.
+    """
+    out: dict[str, dict] = {}
+    for r in runs:
+        end = parse_iso(r.get("ended_at"))
+        if end is None or execution_failed(r) or r.get("kind") == "robustness":
+            continue
+        times = [parse_iso(a.get("timestamp")) for a in r.get("siem_alerts") or []]
+        times += [parse_iso(c.get("created_at")) for c in cases if case_in_run(c, r)]
+        lags = [(t - end).total_seconds() for t in times if t is not None]
+        row = out.setdefault(r.get("scenario", "?"), {"runs": 0, "max_lag_s": None,
+                                                      "settle_s": int(r.get("settle_seconds", 120)),
+                                                      "cut_off": not r.get("target_unique")})
+        row["runs"] += 1
+        if lags:
+            row["max_lag_s"] = round(max([max(lags)] + ([row["max_lag_s"]] if row["max_lag_s"] is not None else [])), 1)
+    for row in out.values():
+        row["tight"] = bool(row["cut_off"] and row["max_lag_s"] is not None and row["max_lag_s"] > row["settle_s"] / 2)
+    return out
 
 
 def in_scope(cases: list[dict], runs: list[dict], since: str | None) -> tuple[list[dict], list[dict]]:
@@ -300,6 +334,11 @@ def compute_metrics(cases: list[dict], runs: list[dict], rules_meta: dict | None
             e2e.setdefault(c["source"], []).append(max(0.0, (cr - parse_iso(run["started_at"])).total_seconds()))
     total_alerts = sum(int(c.get("alert_count", 1)) for c in measured_cases)
     containment = summary([c["containment_seconds"] for c in cases if c.get("containment_seconds") is not None])
+    contained = [c for c in cases if c.get("isolated_at") and not c.get("decided_by_assistant")]
+    case_to_contained = summary([round((parse_iso(c["isolated_at"]) - parse_iso(c["created_at"])).total_seconds(), 2)
+                                 for c in contained if parse_iso(c.get("created_at"))])
+    approval_wait = summary([round((parse_iso(c["approved_at"]) - parse_iso(c["notified_at"])).total_seconds(), 2)
+                             for c in contained if parse_iso(c.get("approved_at")) and parse_iso(c.get("notified_at"))])
     robustness = [r for r in runs if r.get("kind") == "robustness"]
     lead = []
     for d in deployments or []:
@@ -316,6 +355,8 @@ def compute_metrics(cases: list[dict], runs: list[dict], rules_meta: dict | None
         "detection_latency_by_source_s": {"alert_to_case": {k: summary(v) for k, v in pipeline.items()},
                                           "run_start_to_case": {k: summary(v) for k, v in e2e.items()}},
         "time_to_containment_s": containment,
+        "approval_wait_s": approval_wait,
+        "case_to_containment_s": case_to_contained,
         "time_to_evidence_preservation_s": summary([c["evidence_seconds"] for c in cases
                                                     if c.get("evidence_seconds") is not None]),
         "time_to_restore_s": summary([c["restore_seconds"] for c in cases if c.get("restore_seconds") is not None]),
@@ -329,6 +370,7 @@ def compute_metrics(cases: list[dict], runs: list[dict], rules_meta: dict | None
             "reduction": round(1 - len(measured_cases) / total_alerts, 3) if total_alerts else None},
         "rule_deployment_lead_time_s": summary(lead),
         # a run the harness could not carry out (e.g. its own setup error) tested nothing: listed, not scored
+        "window_headroom": window_headroom(cases, runs),
         "robustness": {"runs": sum(1 for r in robustness if not execution_failed(r)),
                        "passed": sum(1 for r in robustness if r.get("result", {}).get("pass")),
                        "not_executed": sum(1 for r in robustness if execution_failed(r)),
@@ -338,8 +380,7 @@ def compute_metrics(cases: list[dict], runs: list[dict], rules_meta: dict | None
         "operating_cost": cost or {"available": False, "note": "no cost data: run without --offline so that "
                                    "CloudTrail, the Pricing API and Cost Explorer can be queried"},
         "baseline_comparison": baseline_comparison(
-            baseline or [], containment, [manual_steps(c) for c in cases if c.get("containment_seconds") is not None
-                                       and not c.get("decided_by_assistant")]),  # not a human decision
+            baseline or [], case_to_contained, [manual_steps(c) for c in contained]),
     }
 
 
@@ -383,6 +424,8 @@ def render_markdown(m: dict) -> str:
         L.append(f"| {s} | {_fmt(lat['alert_to_case'].get(s))} | {_fmt(lat['run_start_to_case'].get(s))} |")
     L += ["", "## Thời gian phản ứng", "",
           f"- Time to containment (từ lúc duyệt đến khi xác minh): {_fmt(m['time_to_containment_s'])}",
+          f"- Thời gian chờ người duyệt (thông báo → duyệt): {_fmt(m.get('approval_wait_s'))}",
+          f"- Từ khi có case đến khi ngăn chặn xong (gồm chờ duyệt): {_fmt(m.get('case_to_containment_s'))}",
           f"- Time to evidence preservation: {_fmt(m['time_to_evidence_preservation_s'])}",
           f"- Time to restore: {_fmt(m['time_to_restore_s'])}", "", "## Chất lượng rule (ground truth)", "",
           "Tầng case (SOAR):", "",
@@ -420,6 +463,14 @@ def render_markdown(m: dict) -> str:
           f"- {m['alert_duplication_reduction']['alerts']} alert → {m['alert_duplication_reduction']['cases']} case "
           f"(giảm {m['alert_duplication_reduction']['reduction']})", "",
           "## Rule deployment lead time", "", f"- {_fmt(m['rule_deployment_lead_time_s'])}", "",
+          "## Cửa sổ chờ của kịch bản (kiểm chứng bằng số đo)", "",
+          "| Kịch bản | Lượt | Phát hiện muộn nhất sau khi chạy xong | Cửa sổ | Đánh giá |", "|---|---|---|---|---|"]
+    for sid, w in sorted((m.get("window_headroom") or {}).items()):
+        verdict = ("không cắt (target riêng của lượt)" if not w["cut_off"] else
+                   "SÁT: nới cửa sổ" if w["tight"] else "đủ dư" if w["max_lag_s"] is not None else "chưa có phát hiện")
+        L.append(f"| {sid} | {w['runs']} | {w['max_lag_s'] if w['max_lag_s'] is not None else '-'} s | "
+                 f"{w['settle_s']} s | {verdict} |")
+    L += ["",
           "## Robustness", "", f"- Đạt {m['robustness']['passed']}/{m['robustness']['runs']} lượt chạy"
           + (f" ({m['robustness'].get('not_executed')} lượt không thực thi được do lỗi công cụ, không tính)"
              if m["robustness"].get("not_executed") else "")]
@@ -430,8 +481,9 @@ def render_markdown(m: dict) -> str:
         "", "## So sánh baseline (GuardDuty email + cách ly thủ công)", ""]
     b = m["baseline_comparison"]
     L.append("- " + (b["note"] if not b["available"] else
-                     f"baseline p50 {b['baseline_contain_p50_s']}s vs SOAR p50 {b['soar_contain_p50_s']}s; "
-                     f"số thao tác thủ công {b['baseline_manual_steps_mean']} vs {b['soar_manual_steps']}. {b['note']}"))
+                     f"{b['drills']} lượt cách ly thủ công đo từ CloudTrail: p50 {b['baseline_contain_p50_s']}s; SOAR "
+                     f"(case → ngăn chặn, {b['soar_cases']} case) p50 {b['soar_case_to_contained_p50_s']}s; số thao "
+                     f"tác thủ công {b['baseline_manual_steps_mean']} vs {b['soar_manual_steps']}. {b['note']}"))
     L += ["", "## Giới hạn", "", "Xem docs/limitations.md. Số liệu chỉ phản ánh lab một tài khoản với lưu lượng mô phỏng."]
     return "\n".join(L) + "\n"
 
@@ -445,21 +497,6 @@ def _nonnegative_float(value, field: str) -> float:
         raise ValueError(f"{field} must be finite and non-negative")
     return number
 
-
-def _read_csv(path: str | None, expected_columns: set[str]) -> list[dict]:
-    if not path or not Path(path).exists():
-        return []
-    with open(path, newline="", encoding="utf-8") as fh:
-        reader = csv.DictReader(line for line in fh if not line.lstrip().startswith("#"))
-        columns = reader.fieldnames or []
-        if len(columns) != len(set(columns)) or set(columns) != expected_columns:
-            raise ValueError(f"{path}: expected columns {sorted(expected_columns)}")
-        rows = []
-        for line, row in enumerate(reader, start=2):
-            if None in row:
-                raise ValueError(f"{path}:{line}: row has more fields than the header")
-            rows.append(row)
-        return rows
 
 
 def _guarded(fn, *args) -> dict:
@@ -508,8 +545,6 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--prefix", default="siemsoar")
     ap.add_argument("--out", default="reports")
-    ap.add_argument("--baseline", default=str(ROOT / "evaluation" / "baseline.csv"),
-                    help="optional stopwatch drills; without it the baseline is measured from CloudTrail")
     ap.add_argument("--days", type=int, default=30, help="how far back CloudTrail/Cost Explorer are queried (max 90)")
     ap.add_argument("--offline", nargs=2, metavar=("CASES_JSON", "RUNS_JSON"))
     ap.add_argument("--since", help="only cases/runs from this ISO time on (start of a measurement period)")
@@ -518,8 +553,7 @@ def main(argv: list[str] | None = None) -> int:
     from tools import rulesctl
     deployments: list[dict] = []
     cost: dict | None = None
-    baseline = _read_csv(args.baseline, {"scenario", "run", "seconds_to_notice", "seconds_to_contain", "manual_steps",
-                                         "errors", "notes"})
+    baseline: list[dict] = []
     if args.offline:
         cases, runs = (json.loads(Path(p).read_text(encoding="utf-8")) for p in args.offline)
     else:
@@ -540,13 +574,12 @@ def main(argv: list[str] | None = None) -> int:
             cost = collect_cost(args.days)
         except Exception as err:  # noqa: BLE001
             cost = {"available": False, "note": f"AWS cost sources unavailable: {type(err).__name__}: {err}"}
-        if not baseline:
-            end = datetime.now(UTC)
-            measured = _guarded(lambda: {"rows": sources.baseline_from_cloudtrail(
-                aws.client("cloudtrail"), aws.client("guardduty"), end - timedelta(days=args.days), end)})
-            if "error" in measured:
-                print(f"warning: baseline from CloudTrail unavailable: {measured['error']}", file=sys.stderr)
-            baseline = measured.get("rows", [])
+        end = datetime.now(UTC)  # the baseline is measured from CloudTrail, never typed in
+        measured = _guarded(lambda: {"rows": sources.baseline_from_cloudtrail(
+            aws.client("cloudtrail"), aws.client("guardduty"), end - timedelta(days=args.days), end)})
+        if "error" in measured:
+            print(f"warning: baseline from CloudTrail unavailable: {measured['error']}", file=sys.stderr)
+        baseline = measured.get("rows", [])
     cases, runs = in_scope(cases, runs, args.since)
     m = compute_metrics(cases, runs, rulesctl.load_metadata(), baseline, deployments, cost)
     m["scope"]["since"] = args.since

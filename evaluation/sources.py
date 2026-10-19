@@ -6,7 +6,9 @@
                  Project=siem-soar-lab (needs the tag activated in Billing; data lags up to ~24 h; ~$0.01 per request).
                  Or, as an estimate, list prices from the AWS Pricing API (never a constant in the code).
   * baseline   - the manual alternative: for each GuardDuty finding, the first containment API call a *human* made on the
-                 same resource (CloudTrail), minus the finding time, plus how many state-changing calls they needed.
+                 same resource from the AWS Management Console (CloudTrail), minus the finding time, plus how many
+                 state-changing console calls they needed. Scripts with the same credentials (the simulation runner
+                 deletes the previous victim key before each Stratus run) are not a person reacting to an alert.
 
 Every function takes the boto3 client as a parameter and has a pure core, so tests run without AWS. CloudTrail event
 fields follow https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-event-reference.html .
@@ -173,7 +175,15 @@ def estimate_session_cost(sessions: list[dict], prices: dict[str, float]) -> dic
 
 
 def actual_cost(ce, start: datetime, end: datetime, tag_key: str = "Project", tag_value: str = "siem-soar-lab") -> dict:
-    """What AWS billed, per service, for resources carrying the cost-allocation tag (Cost Explorer, daily)."""
+    """What AWS billed, per service, for resources carrying the cost-allocation tag (Cost Explorer, daily).
+
+    An empty answer for an inactive tag means "unknown", not "$0": Cost Explorer only filters by user-defined tags
+    that are activated as cost-allocation tags. That case raises, so the report says why there is no figure."""
+    tags = ce.list_cost_allocation_tags(TagKeys=[tag_key]).get("CostAllocationTags", [])
+    status = next((t.get("Status") for t in tags if t.get("TagKey") == tag_key), None)
+    if status != "Active":
+        raise RuntimeError(f"cost-allocation tag {tag_key!r} is {status or 'unknown to Billing'}: activate it in "
+                           f"Billing > Cost allocation tags; until then the billed cost is unknown, not $0")
     res = ce.get_cost_and_usage(
         TimePeriod={"Start": start.date().isoformat(), "End": end.date().isoformat()}, Granularity="DAILY",
         Metrics=["UnblendedCost"], Filter={"Tags": {"Key": tag_key, "Values": [tag_value]}},
@@ -190,6 +200,13 @@ def actual_cost(ce, start: datetime, end: datetime, tag_key: str = "Project", ta
 
 
 # --------------------------------------------------------------------------- baseline (manual containment)
+def from_console(record: dict) -> bool:
+    """CloudTrail `sessionCredentialFromConsole`: "Shows whether or not an event originated from an AWS Management
+    Console session" (https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-event-reference-record-contents.html).
+    Absent for SDK/CLI/Terraform calls, observed "true" for console clicks in the lab account."""
+    return str(record.get("sessionCredentialFromConsole", "")).lower() == "true"
+
+
 def is_soar_principal(record: dict) -> bool:
     arn = _dig(record, "userIdentity", "arn") or ""
     return any(marker in arn for marker in SOAR_PRINCIPAL_MARKERS)
@@ -209,11 +226,12 @@ def baseline_rows(findings: list[dict], events: list[dict]) -> list[dict]:
     """One row per finding that a human contained by hand.
 
     findings: [{"id", "type", "created_at", "resources": {instance ids / user names / key ids}}]
-    events:   CloudTrail records. A human containment call is the first CONTAINMENT_EVENTS call, by a non-SOAR principal,
-    on one of the finding's resources, within BASELINE_WINDOW after the finding. manual_steps = every state-changing
-    (readOnly=false) call that same principal made in between, on any resource, i.e. what the person actually clicked.
+    events:   CloudTrail records of the looked-up API names. A human containment call is the first CONTAINMENT_EVENTS
+    call made from the console by a non-SOAR principal, on one of the finding's resources, within BASELINE_WINDOW after
+    the finding. manual_steps = the state-changing (readOnly=false) console calls among those API names that the same
+    principal made in between, i.e. what the person clicked to contain.
     """
-    humans = sorted((e for e in events if not is_soar_principal(e) and _time(e.get("eventTime"))),
+    humans = sorted((e for e in events if from_console(e) and not is_soar_principal(e) and _time(e.get("eventTime"))),
                     key=lambda e: _time(e["eventTime"]))
     rows = []
     for f in findings:
@@ -232,7 +250,7 @@ def baseline_rows(findings: list[dict], events: list[dict]) -> list[dict]:
                  and created <= _time(e["eventTime"]) <= done]
         rows.append({"scenario": f["type"], "run": f["id"], "seconds_to_contain": round((done - created).total_seconds(), 1),
                      "manual_steps": len(steps), "seconds_to_notice": "", "errors": 0,
-                     "notes": f"{hit['eventName']} by {who} (CloudTrail)"})
+                     "notes": f"{hit['eventName']} by {who} (CloudTrail, console)"})
     return rows
 
 
