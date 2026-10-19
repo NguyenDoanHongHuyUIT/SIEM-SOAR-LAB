@@ -10,6 +10,7 @@ atomic:
   timeout: 120
 verify:
   - 'test -s /tmp/T1003.008.txt'
-expect: []   # observation: no SIEMSOAR rule yet. The audit/FIM events of these runs are the basis of the
-             # rules written next (shadow first); until then the technique counts as exercised, not detected.
+expect: []   # no distinguishing signal: /etc/passwd is world-readable and read by every program that resolves
+             # a user name; the run left only generic `cat`/`grep` commands (lab 2026-10-19). Counted as exercised,
+             # not detected, and listed in docs/limitations.md.
 settle_seconds: 120

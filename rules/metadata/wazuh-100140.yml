@@ -1,0 +1,32 @@
+id: wazuh-100140
+engine: wazuh
+rule_id: 100140
+name: Cron job added or changed
+state: shadow
+response: ec2_isolate
+mitre: [T1053.003]
+wraps: [550, 554]
+references:
+  - https://attack.mitre.org/techniques/T1053/003/
+  - https://github.com/redcanaryco/atomic-red-team/blob/388942adbd9641f4dfdcf079d7efe9a75ec0ac43/atomics/T1053.003/T1053.003.md
+  - https://documentation.wazuh.com/current/user-manual/capabilities/file-integrity/index.html
+  - https://github.com/wazuh/wazuh/blob/v4.14.8/ruleset/rules/0015-ossec_rules.xml
+tactic: Execution, Persistence, Privilege Escalation   # ATT&CK v20 kill_chain_phases of T1053.003
+owner: nguyen-doan-hong-huy
+created: 2026-10-20
+data_source: Wazuh syscheck (FIM) on /etc/cron.d, /var/spool/cron/crontabs, /etc/crontab
+description: >
+  A file under the cron directories was added or changed. Observed on the lab: FIM 554 on
+  /etc/cron.d/persistevil and /var/spool/cron/crontabs/persistevil (Atomic T1053.003 #3, #4).
+expected_fp: >
+  Package installs and updates that ship cron jobs, an administrator editing a crontab.
+tests:
+  - name: cron.d entry added (Atomic T1053.003 #3 on the lab)
+    expect: match
+    fim: {path: /etc/cron.d/persistevil, type: added}
+  - name: user crontab added (Atomic T1053.003 #4 on the lab)
+    expect: match
+    fim: {path: /var/spool/cron/crontabs/persistevil, type: added}
+  - name: a file outside the cron directories
+    expect: no_match
+    fim: {path: /etc/hosts, type: modified}

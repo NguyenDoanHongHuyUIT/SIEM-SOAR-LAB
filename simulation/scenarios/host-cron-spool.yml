@@ -10,6 +10,6 @@ atomic:
   timeout: 120
 verify:
   - 'test -s /var/spool/cron/crontabs/persistevil'
-expect: []   # observation: no SIEMSOAR rule yet. The audit/FIM events of these runs are the basis of the
-             # rules written next (shadow first); until then the technique counts as exercised, not detected.
+expect:
+  - {source: wazuh, rule_id: "100140", case: false}   # shadow; written from this scenario's lab events (2026-10-19)
 settle_seconds: 120
