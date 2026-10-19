@@ -42,7 +42,7 @@ jobs:
         with:
           role-to-assume: ${{ vars.APPLY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: pip install boto3
