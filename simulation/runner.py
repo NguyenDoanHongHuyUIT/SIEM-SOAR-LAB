@@ -42,7 +42,7 @@ sys.path.insert(0, str(ROOT))
 
 from siemsoar.util import parse_iso  # noqa: E402
 
-from simulation.catalog import SCENARIO_DIR, case_in_run, load_scenarios  # noqa: E402,F401  (re-exported)
+from simulation.catalog import SCENARIO_DIR, case_in_run, load_scenarios, merged_in_run  # noqa: E402,F401
 
 PCAP_DIR = ROOT / "rules" / "pcaps"
 GROUND_TRUTH_ACTOR = "sim:ground-truth"
@@ -70,8 +70,8 @@ def match_expectations(expect: list[dict], cases: list[dict], run: dict) -> list
 
     checks = []
     for e in expect:
-        hits = [case for case in cases if str(case["rule_id"]) == str(e["rule_id"]) and case["source"] == e["source"]
-                and case_in_run(case, run)]
+        same = [case for case in cases if str(case["rule_id"]) == str(e["rule_id"]) and case["source"] == e["source"]]
+        hits = [case for case in same if case_in_run(case, run)] or [case for case in same if merged_in_run(case, run)]
         want = e.get("case", True)
         ok = bool(hits) == want
         if not ok and e.get("optional"):

@@ -196,10 +196,14 @@ class CaseStore:
                 raise
 
     def bump_alert(self, case_id: str, event_time: str, source_id: str) -> int:
+        """Merge an alert into an open case. `merged_at` keeps when each merged alert arrived (same clock as
+        created_at), so a later detection is attributable to the run that caused it instead of looking like a miss."""
+        now = iso()
         res = self.table.update_item(
             Key={"pk": f"CASE#{case_id}", "sk": "META"}, UpdateExpression=(
-                "ADD alert_count :one SET last_seen = :t, updated_at = :u"),
-            ExpressionAttributeValues={":one": 1, ":t": event_time, ":u": iso()},
+                "ADD alert_count :one SET last_seen = :t, updated_at = :u, "
+                "merged_at = list_append(if_not_exists(merged_at, :empty), :now)"),
+            ExpressionAttributeValues={":one": 1, ":t": event_time, ":u": now, ":empty": [], ":now": [now]},
             ConditionExpression="attribute_exists(pk)", ReturnValues="ALL_NEW")
         count = int(res["Attributes"]["alert_count"])
         self.audit(case_id, "alert_deduplicated", "system", {"source_id": source_id, "alert_count": count})
