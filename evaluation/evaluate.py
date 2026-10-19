@@ -332,7 +332,10 @@ def compute_metrics(cases: list[dict], runs: list[dict], rules_meta: dict | None
     pipeline: dict[str, list[float]] = {}
     e2e: dict[str, list[float]] = {}
     for c in measured_cases:
-        ev, cr = parse_iso(c.get("event_time")), parse_iso(c.get("created_at"))
+        # GuardDuty: the activity that triggered this delivery (eventLastSeen, kept in `extra.last_seen`); cases stored
+        # before the schema used it carry the first occurrence as event_time, hours early for a recurring finding
+        last = parse_iso((c.get("extra") or {}).get("last_seen")) if c["source"] == "guardduty" else None
+        ev, cr = last or parse_iso(c.get("event_time")), parse_iso(c.get("created_at"))
         if ev and cr:
             pipeline.setdefault(c["source"], []).append(max(0.0, (cr - ev).total_seconds()))
         run, exp = attribute(c, runs)

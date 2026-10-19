@@ -429,6 +429,14 @@ def test_a_repeat_run_merged_into_the_open_case_is_detected_not_missed():
     assert not catalog.merged_in_run(elsewhere, second)
 
 
+def test_guardduty_latency_uses_the_latest_activity_of_a_recurring_finding():
+    case = _case(1, rule="Policy:IAMUser/RootCredentialUsage", source="guardduty", status="ACKNOWLEDGED",
+                 created="2026-10-19T09:30:16.382Z", event="2026-10-19T04:06:41.000Z",
+                 extra={"finding_count": 241, "last_seen": "2026-10-19T09:12:29.000Z"})
+    lat = ev.compute_metrics([case], [], {})["detection_latency_by_source_s"]["alert_to_case"]["guardduty"]
+    assert lat["p50"] == 1067.38  # 17.8 min from the last activity, not 5.4 h from the first occurrence
+
+
 def test_manual_steps_are_read_from_the_case_timeline():
     assert ev.manual_steps({"approved_at": "t1", "restoring_at": "t2"}) == 2
     assert ev.manual_steps({"approved_at": "t1"}) == 1
