@@ -123,6 +123,7 @@ api_call = ["service.action.awsApiCallAction.api"]
 service_name = ["service.action.awsApiCallAction.serviceName"]
 finding_count = ["service.count"]
 last_seen = ["service.eventLastSeen"]
+first_seen = ["service.eventFirstSeen"]
 
 # Entities that are integers once coerced. NOT flow_id: Wazuh parses JSON numbers as doubles, so a Suricata flow_id above
 # 2^53 reaches us already rounded (observed: "822746917091085.000000"); it is kept as the string Wazuh delivered.

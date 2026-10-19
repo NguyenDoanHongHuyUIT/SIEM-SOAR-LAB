@@ -152,8 +152,14 @@ def _gd_resource(rtype: str, res: dict) -> tuple[str, str, dict]:
         if not isinstance(ak, dict):
             raise InvalidEvent("GuardDuty accessKeyDetails must be an object")
         user, key = ak.get("userName", ""), ak.get("accessKeyId", "")
-        return "iam_access_key", (f"{user}/{key}" if user else key or "unknown"), {
-            "user_name": user, "access_key_id": key, "user_type": ak.get("userType")}
+        # IAM unique-id prefixes: AKIA = long-term access key, ASIA = temporary STS credentials
+        # (https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_identifiers.html#identifiers-unique-ids).
+        # A temporary key changes with every session (each console login of the root user is a new ASIA key), so the
+        # principal is the resource: one case per identity, not per session. It cannot be disabled by UpdateAccessKey.
+        temporary = key.startswith("ASIA")
+        rid = f"{user}/temporary-credentials" if temporary and user else (f"{user}/{key}" if user else key or "unknown")
+        return "iam_access_key", rid, {"user_name": user, "access_key_id": key, "user_type": ak.get("userType"),
+                                       "temporary": temporary}
     return rtype, "unknown", {}
 
 
@@ -165,7 +171,7 @@ def _gd_plan(rtype: str, facts: dict, sample: bool) -> dict:
         if entry["plan"] == PLAN_EC2 and (INSTANCE_ID_RE.match(facts["instance_id"]) or sample):
             return _plan(PLAN_EC2, {"instance_id": facts["instance_id"]})
         if entry["plan"] == PLAN_IAM:
-            if (facts["user_name"] and facts["access_key_id"]
+            if (facts["user_name"] and facts["access_key_id"] and not facts.get("temporary")
                     and facts["user_type"] in entry.get("user_types", [facts["user_type"]])):
                 return _plan(PLAN_IAM, {"user_name": facts["user_name"], "access_key_id": facts["access_key_id"]})
     return _plan()
@@ -208,7 +214,10 @@ def normalize_guardduty(detail: dict) -> dict:
     kind, resource_id, facts = _gd_resource(rtype, res)
     resource: dict[str, Any] = {"type": kind, "id": resource_id, "region": region, "account": account}
     sev = _scale(severity, maximum)
-    event_time = _event_time(service.get("eventFirstSeen") or detail.get("createdAt"), "GuardDuty event time")
+    # the activity that produced THIS delivery: for a recurring finding (service.count > 1) it is eventLastSeen, not the
+    # first occurrence hours earlier (lab 2026-10-19: root usage first seen 04:06, cases at 07:30-09:30 measured 4.4 h)
+    event_time = _event_time(service.get("eventLastSeen") or service.get("eventFirstSeen") or detail.get("createdAt"),
+                             "GuardDuty event time")
     entities = extract_entities("guardduty", detail)
     # GuardDuty keeps the finding id when the activity recurs and only bumps service.count / updatedAt, so the id alone
     # would make every recurrence look like an EventBridge re-delivery and drop it. One delivery = one finding version.
