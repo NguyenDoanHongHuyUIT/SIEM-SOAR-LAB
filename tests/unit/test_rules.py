@@ -158,7 +158,7 @@ def test_build_injects_lifecycle_groups_and_manifest(tmp_path):
     assert mapping.findtext("if_sid") == "86601" and mapping.findtext("field") == "^2009582$"
     assert rules[110103].element.find("mitre") is None  # no technique claimed -> no empty <mitre/>
     states = [m["state"] for m in rulesctl.load_metadata().values()]
-    assert manifest["summary"] == {s: states.count(s) for s in rulesctl.STATES} and sum(manifest["summary"].values()) == 11
+    assert manifest["summary"] == {s: states.count(s) for s in rulesctl.STATES} and sum(manifest["summary"].values()) == len(states)
     assert manifest["commit_time"].startswith("2026") and manifest["et_open_version"]
     suri = (tmp_path / "deadbee" / "suricata" / "siemsoar.rules").read_text()
     assert 'msg:"ET SCAN NMAP -sS window 1024"' in suri and not any(

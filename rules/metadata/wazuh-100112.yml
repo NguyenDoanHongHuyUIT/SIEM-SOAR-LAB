@@ -1,0 +1,30 @@
+id: wazuh-100112
+engine: wazuh
+rule_id: 100112
+name: New service account without a login shell (exception of 100110)
+state: shadow
+response: none
+mitre: []                # an exception: it claims no technique, it takes non-interactive accounts out of 100110
+wraps: []                # hangs under the SIEMSOAR rule 100110 (itself under the official 5902)
+references:
+  - https://man7.org/linux/man-pages/man8/nologin.8.html
+  - https://manpages.debian.org/bookworm/adduser/adduser.8.en.html
+  - https://github.com/wazuh/wazuh/blob/v4.14.8/ruleset/rules/0020-syslog_rules.xml
+owner: nguyen-doan-hong-huy
+created: 2026-10-19
+data_source: auth.log / syslog (useradd) via Wazuh agent
+description: >
+  useradd logs the new account's shell. nologin(8) "is intended as a replacement shell field to deny login access to an
+  account", and `adduser --system` gives system accounts /usr/sbin/nologin. Such an account cannot be the interactive
+  persistence T1136.001 describes, so it is alerted at level 3 instead of opening a containment case. Basis: the
+  useradd lines Wazuh recorded on the lab (2026-10-19): all Atomic T1136.001 accounts had /bin/bash, the benign
+  service-account scenario /usr/sbin/nologin. Residual risk: an account created with nologin and later given a shell;
+  that change is the official rule 5904 (usermod, T1098).
+expected_fp: none known; it is itself the exception for service accounts.
+tests:
+  - name: benign service account recorded on the lab (real useradd line)
+    expect: match
+    log: "Oct 19 03:13:32 ip-10-42-0-73 useradd[2653]: new user: name=siemsoar_svc_1565, UID=997, GID=997, home=/home/siemsoar_svc_1565, shell=/usr/sbin/nologin, from=none"
+  - name: Atomic T1136.001 account with /bin/bash recorded on the lab (stays 100110)
+    expect: no_match
+    log: "Oct 19 01:29:35 ip-10-42-0-73 useradd[1622]: new user: name=siemsoar_sim_ab03, UID=997, GID=100, home=/home/siemsoar_sim_ab03, shell=/bin/bash, from=none"

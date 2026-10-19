@@ -74,6 +74,15 @@
       <id>T1136.001</id>
     </mitre>
   </rule>
+  <!-- Exception: an account whose shell refuses logins (nologin(8), false(1)) is not an interactive foothold; package
+       scripts and adduser for system accounts create them. It is still alerted, at a low level. A later switch to a
+       login shell is reported by the official rule 5904 (usermod, T1098). Measured on the lab (2026-10-19): every
+       Atomic T1136.001 account had /bin/bash, the benign service account /usr/sbin/nologin. -->
+  <rule id="100112" level="3">
+    <if_sid>100110</if_sid>
+    <match>shell=/usr/sbin/nologin|shell=/sbin/nologin|shell=/bin/false|shell=/usr/bin/false</match>
+    <description>SIEMSOAR: new service account without a login shell</description>
+  </rule>
 </group>
 
 <group name="siemsoar,authentication_failures,sshd,">
