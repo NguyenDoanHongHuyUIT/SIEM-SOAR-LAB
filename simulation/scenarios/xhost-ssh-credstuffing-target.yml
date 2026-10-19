@@ -1,0 +1,18 @@
+id: xhost-ssh-credstuffing-target
+title: Credential access - SSH credential stuffing from the sensor against a lab target (Atomic Red Team T1110.004 test 1, cross-host)
+kind: atomic
+target: sensor            # runs where sshpass is installed (the test's declared prerequisite)
+observe_on: lab-target    # sshd on the target logs the attempts; its Wazuh agent raises the detection
+malicious: true
+atomic:
+  technique: T1110.004
+  test_guid: 4f08197a-2a8a-472d-9589-cd2895ef22ad   # same upstream test as host-ssh-credstuffing
+  args: {target_host: "{target_ip}"}
+  ref: 388942adbd9641f4dfdcf079d7efe9a75ec0ac43
+  timeout: 900
+expect:
+  - {source: wazuh, rule_id: "100121", case: false}
+settle_seconds: 180
+notes: >
+  The attempts cross the network: the source is the sensor, the evidence is on the target's sshd. Run target (for
+  attribution) is the target instance.

@@ -36,28 +36,6 @@ bash "$BOOT/scripts/deploy_rules.sh" sensor current || log "no rule release yet,
 systemctl enable suricata
 systemctl restart suricata
 
-# ---- Wazuh agent. The manager installs for ~10-15 min after boot: wait until it accepts enrolment instead of
-# letting the package post-install fail to register.
-log "waiting for the Wazuh manager (${MANAGER_IP}:1515)"
-for _ in $(seq 1 120); do
-  if timeout 3 bash -c "</dev/tcp/${MANAGER_IP}/1515" 2>/dev/null; then break; fi
-  sleep 15
-done
-curl -fsS https://packages.wazuh.com/key/GPG-KEY-WAZUH | gpg --no-default-keyring \
-  --keyring gnupg-ring:/usr/share/keyrings/wazuh.gpg --import
-chmod 644 /usr/share/keyrings/wazuh.gpg
-echo "deb [signed-by=/usr/share/keyrings/wazuh.gpg] https://packages.wazuh.com/4.x/apt/ stable main" \
-  > /etc/apt/sources.list.d/wazuh.list
-apt-get update -y
-# The 4.x apt channel always serves the NEWEST 4.x agent, but the manager is pinned to ${WAZUH_VERSION}.
-# Wazuh requires manager version >= agent version, so pin the agent to the same minor and hold it.
-WAZUH_MANAGER="$MANAGER_IP" WAZUH_AGENT_NAME="$INSTANCE_ID" apt-get install -y "wazuh-agent=${WAZUH_VERSION}.*"
-apt-mark hold wazuh-agent
-
-# Replace (not skip) the SIEMSOAR block, so re-running this script applies a changed agent configuration
-sed -i '/<!-- BEGIN SIEMSOAR/,/<!-- END SIEMSOAR -->/d' /var/ossec/etc/ossec.conf
-cat "$BOOT/suricata/ossec_agent_additions.xml" >> /var/ossec/etc/ossec.conf
-mkdir -p /srv/lab && touch /srv/lab/canary.txt   # FIM canary used by the simulation scenarios
-systemctl daemon-reload
-systemctl enable --now wazuh-agent
+# ---- Wazuh agent (shared with the targets), plus the sensor's Suricata EVE input
+bash "$BOOT/agent/install_wazuh_agent.sh" "$BOOT/suricata/ossec_eve_localfile.xml"
 log "done"

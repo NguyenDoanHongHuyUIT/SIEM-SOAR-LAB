@@ -1,6 +1,7 @@
 # Wazuh/Suricata configuration and helper scripts are shipped through S3 (EC2 user-data is limited to 16 KB).
 locals {
   bootstrap_dirs = {
+    agent    = "${path.module}/../../../agent"
     wazuh    = "${path.module}/../../../wazuh"
     suricata = "${path.module}/../../../suricata"
     scripts  = "${path.module}/../../../scripts"

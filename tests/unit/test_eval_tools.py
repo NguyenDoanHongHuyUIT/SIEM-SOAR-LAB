@@ -173,6 +173,40 @@ def test_the_runner_refuses_to_attack_a_host_a_case_still_contains(monkeypatch):
     assert r.attack_target("suricata-sensor") == "i-06c071a9fc8745d6c"
 
 
+def test_a_cross_host_run_is_attributed_to_the_host_that_sees_the_detection(monkeypatch):
+    """xhost-ssh-credstuffing-target runs on the sensor; the sshd evidence is on lab-target-1, so the run's target
+    (attribution, SIEM query) is the target instance, and a contained target refuses the run."""
+    from types import SimpleNamespace
+    r = object.__new__(runner.Runner)
+    r.dry_run, r.wait, r.log = False, False, (lambda m: None)
+    r.store = SimpleNamespace(put_run=lambda run: None)
+    r.rules_release = lambda: None
+    hosts = {"suricata-sensor": "i-0aaaaaaaaaaaaaaa1", "lab-target": "i-0bbbbbbbbbbbbbbb2"}
+    contained = set()
+
+    def attack_target(role):
+        if hosts[role] in contained:
+            raise RuntimeError(f"{hosts[role]} is contained by case C-1")
+        return hosts[role]
+    r.attack_target = attack_target
+    r.exec_atomic = lambda s, run_id: {"instance": attack_target(runner.EXEC_ROLES[s.get("target", "sensor")])}
+    run = r.run("xhost-ssh-credstuffing-target")
+    assert run["target"] == "i-0bbbbbbbbbbbbbbb2" and run["details"]["executed_on"] == "i-0aaaaaaaaaaaaaaa1"
+    contained.add("i-0bbbbbbbbbbbbbbb2")
+    refused = r.run("xhost-ssh-credstuffing-target")
+    assert "contained by case" in refused["execution_error"]
+
+
+def test_scenario_hosts_are_validated(tmp_path):
+    good = catalog.load_scenarios(catalog.SCENARIO_DIR)["target-useradd"]
+    assert good["target"] == "lab-target"
+    for bad in ({"target": "everywhere"}, {"observe_on": "manager"}):
+        doc = {"id": "x", "title": "t", "kind": "ssm_shell", "malicious": False, "commands": ["true"], **bad}
+        (tmp_path / "x.yml").write_text(json.dumps(doc))
+        with pytest.raises(ValueError, match="target must be|observe_on must be"):
+            catalog.load_scenarios(tmp_path)
+
+
 def test_a_cloud_target_has_no_siem_layer_to_read():
     r = object.__new__(runner.Runner)
     r.ssm_run = lambda *a, **k: pytest.fail("no Wazuh query for an IAM key target")

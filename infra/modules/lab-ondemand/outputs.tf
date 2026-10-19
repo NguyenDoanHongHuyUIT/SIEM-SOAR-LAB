@@ -1,5 +1,7 @@
 output "manager_instance_id" { value = aws_instance.manager.id }
 output "sensor_instance_id" { value = aws_instance.sensor.id }
+output "target_instance_ids" { value = aws_instance.target[*].id }
+output "target_role_names" { value = aws_iam_role.target[*].name }
 output "vpc_id" { value = aws_vpc.lab.id }
 output "victim_user" { value = aws_iam_user.victim.name }
 output "deploy_rules_document" { value = aws_ssm_document.deploy_rules.name }

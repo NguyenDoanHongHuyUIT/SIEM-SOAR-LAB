@@ -14,6 +14,7 @@ output "lab" {
   value = var.lab_enabled ? {
     manager_instance_id    = module.lab[0].manager_instance_id
     sensor_instance_id     = module.lab[0].sensor_instance_id
+    target_instance_ids    = module.lab[0].target_instance_ids
     victim_user            = module.lab[0].victim_user
     deploy_rules_document  = module.lab[0].deploy_rules_document
     dashboard_port_forward = module.lab[0].dashboard_port_forward

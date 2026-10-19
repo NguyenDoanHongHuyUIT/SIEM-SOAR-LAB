@@ -48,6 +48,14 @@ run "with_on_demand_plane" {
     condition     = length(module.lab) == 1
     error_message = "on-demand plane must exist when lab_enabled=true"
   }
+  assert {
+    condition     = length(module.lab[0].target_role_names) == 2 && length(distinct(module.lab[0].target_role_names)) == 2
+    error_message = "each target host needs its own IAM role (containment revokes the role's sessions)"
+  }
+  assert {
+    condition     = alltrue([for n in module.lab[0].target_role_names : startswith(n, "siemsoar-lab-")])
+    error_message = "target roles must match the SOAR's IAM scope role/siemsoar-lab-*"
+  }
 }
 
 run "dry_run_defaults_on" {

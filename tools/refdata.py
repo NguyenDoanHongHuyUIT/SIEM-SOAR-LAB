@@ -54,7 +54,8 @@ def _now() -> str:
 
 # --------------------------------------------------------------------------- ATT&CK
 def parse_attack(bundle: dict) -> dict[str, dict]:
-    """{technique id: {name, revoked, deprecated, revoked_by}} from an ATT&CK STIX bundle."""
+    """{technique id: {name, tactics, revoked, deprecated, revoked_by}} from an ATT&CK STIX bundle (tactics are the
+    technique's `kill_chain_phases` in the mitre-attack kill chain, e.g. "lateral-movement")."""
     objects = bundle["objects"]
     by_stix = {o["id"]: o for o in objects}
 
@@ -74,7 +75,10 @@ def parse_attack(bundle: dict) -> dict[str, dict]:
             continue
         tid = attack_id(o)
         if tid and TECHNIQUE_RE.match(tid):
-            out[tid] = {"name": o["name"], "revoked": bool(o.get("revoked")),
+            out[tid] = {"name": o["name"],
+                        "tactics": sorted(k["phase_name"] for k in o.get("kill_chain_phases", [])
+                                          if k.get("kill_chain_name") == "mitre-attack"),
+                        "revoked": bool(o.get("revoked")),
                         "deprecated": bool(o.get("x_mitre_deprecated")), "revoked_by": successor.get(o["id"])}
     return out
 
