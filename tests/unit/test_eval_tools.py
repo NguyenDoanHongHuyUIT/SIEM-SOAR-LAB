@@ -151,7 +151,7 @@ def test_a_run_specific_target_has_no_late_arrival_cut_off_and_other_targets_nev
 def test_a_cloud_target_has_no_siem_layer_to_read():
     r = object.__new__(runner.Runner)
     r.ssm_run = lambda *a, **k: pytest.fail("no Wazuh query for an IAM key target")
-    run = {"target": "lab-victim/AKIAUSHIDJ5VBY5J6DXQ", "started_at": "2026-10-19T01:34:20Z",
+    run = {"target": "lab-victim/AKIAIOSFODNN7EXAMPLE", "started_at": "2026-10-19T01:34:20Z",
            "ended_at": "2026-10-19T01:35:27Z", "settle_seconds": 1800}
     assert r.siem_alerts(run) == []
 
