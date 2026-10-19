@@ -4,7 +4,8 @@
 
 | | Always-on (serverless) | On-demand (bật theo phiên) |
 |---|---|---|
-| Thành phần | CloudTrail→S3, GuardDuty, EventBridge(+DLQ), Lambda, Step Functions, DynamoDB, S3 evidence, SNS, API Gateway | VPC lab, Wazuh Manager+Indexer+Dashboard, EC2 lab (Wazuh Agent + Suricata) |
+| Thành phần | CloudTrail→S3, GuardDuty, EventBridge(+DLQ), Lambda, Step Functions, DynamoDB, S3 evidence, SNS, API Gateway | VPC lab, Wazuh Manager+Indexer+Dashboard, EC2 sensor (Wazuh Agent + Suricata), `target_count` máy mục tiêu (mặc định 2; Wazuh Agent, **IAM role riêng từng máy**, SSH chỉ mở từ sensor) |
+| Kịch bản xuyên máy | | Test Atomic công khai chạy từ sensor nhắm vào máy mục tiêu (`xhost-*`: T1046, T1110.004); `observe_on` chỉ máy mà phát hiện được kỳ vọng. Atomic Red Team (commit đã ghim) **không có** test Linux thuộc tactic lateral-movement (tra từ ATT&CK v20 + chỉ mục ART), nên không có kịch bản lan truyền ngang tự viết |
 | Chi phí | Trả theo dùng (~vài USD/tháng khi nhàn rỗi; GuardDuty tính theo khối lượng) | Chỉ tính khi bật; `tools.labctl` bật lab và đặt timer tự tắt: EventBridge Scheduler gọi thẳng `ec2:StopInstances` (không Lambda) |
 | Khi tắt | Cloud path (GuardDuty) vẫn tạo case | Telemetry host/Suricata có khoảng trống; CloudTrail trong S3 được Wazuh đọc bù khi bật lại |
 | Terraform | `infra/modules/serverless-core` | `infra/modules/lab-ondemand` (`count = lab_enabled ? 1 : 0`) |

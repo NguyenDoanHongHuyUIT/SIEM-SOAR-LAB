@@ -122,6 +122,10 @@ def observe_expectations(expect: list[dict], alerts: list[dict]) -> dict[str, bo
             for e in expect if e["source"] in ("wazuh", "suricata") and e.get("siem_alert", True)}
 
 
+OBSERVE_ROLES = {"sensor": "suricata-sensor", "lab-target": "lab-target"}  # catalog.OBSERVE_HOSTS -> siemsoar:role
+EXEC_ROLES = {"sensor": "suricata-sensor", "manager": "wazuh-manager", "lab-target": "lab-target"}  # catalog.EXEC_HOSTS
+
+
 def resource_env(prefix: str, account: str) -> dict[str, str]:
     """Names the Lambdas get from Terraform and the runner needs too (it reads evidence after a robustness test).
     Without EVIDENCE_BUCKET the mid-failure recovery could not read pre_action_state and left the host isolated."""
@@ -145,7 +149,8 @@ class Runner:
     # ---- discovery ----------------------------------------------------------------
     def instance(self, role: str) -> str:
         from siemsoar import response
-        ids = [i["id"] for i in response.find_instances({"siemsoar:role": role, "siemsoar:plane": "ondemand"})]
+        found = response.find_instances({"siemsoar:role": role, "siemsoar:plane": "ondemand"})
+        ids = [i["id"] for i in sorted(found, key=lambda i: i["tags"].get("Name", ""))]  # lab-target-1 before -2
         if not ids:
             raise SystemExit(f"no running instance with siemsoar:role={role}; start the lab: soarctl lab up")
         return ids[0]
@@ -201,6 +206,8 @@ class Runner:
             ctx["manager_ip"] = self.private_ip("wazuh-manager")
         if "{sensor_ip}" in text:
             ctx["sensor_ip"] = self.private_ip("suricata-sensor")
+        if "{target_ip}" in text:
+            ctx["target_ip"] = self.private_ip("lab-target")
         return ctx
 
     # ---- executors ----------------------------------------------------------------
@@ -220,7 +227,7 @@ class Runner:
         return inv.get("StandardOutputContent", "")
 
     def exec_ssm_shell(self, s: dict, run_id: str) -> dict:
-        iid = self.attack_target("suricata-sensor" if s.get("target", "sensor") == "sensor" else "wazuh-manager")
+        iid = self.attack_target(EXEC_ROLES[s.get("target", "sensor")])
         ctx = self.context(s)
         cmds = [render(c, run_id, ctx) for c in s["commands"]]
         try:
@@ -237,7 +244,7 @@ class Runner:
         happened: a run whose atomic did nothing is an execution error, never a false negative), then `cleanup`.
         A missing prerequisite makes run_atomic exit 3, which fails the SSM command: also an execution error.
         """
-        iid = self.attack_target("suricata-sensor")
+        iid = self.attack_target(EXEC_ROLES[s.get("target", "sensor")])
         art = s["atomic"]
         ctx = self.context(s)
         timeout = int(art.get("timeout", 120))
@@ -471,7 +478,12 @@ class Runner:
                 checks = getattr(self, f"check_{s['check']}")(s, run_id)
                 run["result"] = {"pass": all(c["ok"] for c in checks), "checks": checks}
             else:
+                # cross-host test: it runs on the sensor, the detection is expected on `observe_on`'s agent. That host
+                # must not be contained either (its new alerts would block the restore of its case).
+                observed = self.attack_target(OBSERVE_ROLES[s["observe_on"]]) if s.get("observe_on") else None
                 details = getattr(self, f"exec_{kind}")(s, run_id)
+                if observed:
+                    details["executed_on"], details["instance"] = details.get("instance"), observed
         except Exception as err:  # noqa: BLE001
             run["result"] = {"pass": False, "checks": [{"name": "execution", "ok": False, "detail": str(err)}]}
             run["execution_error"] = str(err)  # evaluation must not count this run's expectations as false negatives

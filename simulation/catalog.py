@@ -35,7 +35,10 @@ GD_MAPPING = ROOT / "src" / "lambdas" / "siemsoar" / "guardduty_attack.json"
 SCENARIO_KINDS = {"ssm_shell", "atomic", "guardduty_sample", "stratus", "pcap_replay", "robustness"}
 EVIDENCE_KINDS = {"atomic", "stratus", "pcap_replay"}  # their technique comes from a public source, not from us
 SCENARIO_SOURCES = {"guardduty", "wazuh", "suricata"}
-PLACEHOLDERS = {"run_id", "short", "manager_ip", "sensor_ip"}
+PLACEHOLDERS = {"run_id", "short", "manager_ip", "sensor_ip", "target_ip"}
+# where a scenario runs (`target`) and, for cross-host tests, on which host the detection is expected (`observe_on`)
+EXEC_HOSTS = {"sensor", "manager", "lab-target"}
+OBSERVE_HOSTS = {"sensor", "lab-target"}
 MITRE_ID_RE = re.compile(r"^T\d{4}(?:\.\d{3})?$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 # the runner decides some cases itself (robustness scripts, ground-truth closures) as "sim:[ground-truth:]<run_id>"
@@ -79,6 +82,12 @@ def _placeholders_ok(text: str) -> bool:
     return set(re.findall(r"\{(\w+)\}", text)) <= PLACEHOLDERS
 
 
+def _validate_hosts(s: dict, filename: str) -> None:
+    _need(s.get("target", "sensor") in EXEC_HOSTS, filename, f"target must be one of {sorted(EXEC_HOSTS)}")
+    _need(s.get("observe_on") in (None, *OBSERVE_HOSTS), filename,
+          f"observe_on must be one of {sorted(OBSERVE_HOSTS)} (the host whose agent sees the detection)")
+
+
 def _validate_common(s: object, filename: str) -> dict:
     _need(isinstance(s, dict), filename, "scenario must be a YAML mapping")
     _need(s.get("id") == Path(filename).stem, filename, "id must match the filename")
@@ -115,6 +124,7 @@ def _validate_common(s: object, filename: str) -> dict:
         cmds = s.get(key, [])
         _need(isinstance(cmds, list) and all(isinstance(c, str) and c and _placeholders_ok(c) for c in cmds),
               filename, f"{key} must be a list of commands using only {sorted(PLACEHOLDERS)} placeholders")
+    _validate_hosts(s, filename)
     return s
 
 

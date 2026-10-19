@@ -1,0 +1,9 @@
+<!-- BEGIN SIEMSOAR EVE (sensor only, appended by agent/install_wazuh_agent.sh) -->
+<ossec_config>
+  <!-- Suricata EVE JSON -> Wazuh (decoded by the built-in json/suricata decoders) -->
+  <localfile>
+    <log_format>json</log_format>
+    <location>/var/log/suricata/eve.json</location>
+  </localfile>
+</ossec_config>
+<!-- END SIEMSOAR -->

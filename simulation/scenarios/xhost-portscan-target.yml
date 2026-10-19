@@ -1,0 +1,15 @@
+id: xhost-portscan-target
+title: Discovery - TCP SYN scan of a lab target from the sensor (Atomic Red Team T1046 test 2, cross-host)
+kind: atomic
+target: sensor            # runs where nmap is installed; Suricata on the sensor sees its own outbound scan
+malicious: true
+atomic:
+  technique: T1046
+  test_guid: 515942b0-a09f-4163-a7bb-22fefb6f185f   # same upstream test as net-portscan, aimed at lab-target-1
+  args: {host: "{target_ip}", port: "22", network_range: "{target_ip}/32"}
+  ref: 388942adbd9641f4dfdcf079d7efe9a75ec0ac43
+  timeout: 60
+expect:
+  - {source: suricata, rule_id: "110101", case: false}   # ET SCAN NMAP -sS window 1024 (managed, shadow)
+settle_seconds: 120
+notes: Same Atomic test as net-portscan; only the destination differs (a workload target instead of the manager).

@@ -1,11 +1,5 @@
-<!-- BEGIN SIEMSOAR (appended by bootstrap_sensor.sh) -->
+<!-- BEGIN SIEMSOAR (appended by agent/install_wazuh_agent.sh on every lab host) -->
 <ossec_config>
-  <!-- Suricata EVE JSON -> Wazuh (decoded by the built-in json/suricata decoders) -->
-  <localfile>
-    <log_format>json</log_format>
-    <location>/var/log/suricata/eve.json</location>
-  </localfile>
-
   <!-- File integrity monitoring (real-time). Watch the DIRECTORIES and restrict to the files: useradd, usermod, chpasswd
        and visudo write a new file and rename it over the old one, so a real-time watch on the file itself only sees
        the first change (measured on the lab and reproduced on wazuh-manager 4.14.8: 1 alert for 3 changes). -->

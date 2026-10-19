@@ -1,0 +1,20 @@
+id: target-useradd
+title: Persistence - create a local account on a lab target (Atomic Red Team T1136.001 test 1, upstream YAML)
+kind: atomic
+target: lab-target
+malicious: true
+atomic:
+  technique: T1136.001
+  test_guid: 40d8eabd-e394-46f6-8785-b9bfa1d011d2   # "Create a user account on a Linux system": useradd -M -N -r
+  args: {username: "siemsoar_sim_{short}"}
+  ref: 388942adbd9641f4dfdcf079d7efe9a75ec0ac43
+verify:                   # proves the account exists: an atomic that did nothing is an execution error, not a false negative
+  - 'getent passwd siemsoar_sim_{short}'
+cleanup:
+  - 'userdel -r siemsoar_sim_{short} 2>/dev/null || userdel siemsoar_sim_{short} || true'
+expect:
+  - {source: wazuh, rule_id: "100110", case: true}    # official 5902 "new user" -> SIEMSOAR 100110
+  - {source: wazuh, rule_id: "100100", case: false}    # FIM: /etc/passwd changed
+  - {source: wazuh, rule_id: "100102", case: false}   # FIM: /etc/shadow changed (shadow rule: alert, no case)
+settle_seconds: 120
+notes: No run_id in the log line (the atomic is unmodified), so runs are joined to cases by target instance + time window.

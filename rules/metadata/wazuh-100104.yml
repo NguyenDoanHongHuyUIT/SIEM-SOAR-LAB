@@ -17,7 +17,7 @@ created: 2026-10-15
 data_source: Wazuh syscheck (FIM) on root's and the default user's ~/.ssh/authorized_keys
 description: >
   An authorized_keys file was created or changed: adding a key there is a documented way to keep SSH access. The
-  monitored files are listed in suricata/ossec_agent_additions.xml. Shadow until the false-positive rate is measured.
+  monitored files are listed in agent/ossec_agent_additions.xml. Shadow until the false-positive rate is measured.
 expected_fp: Key rotation by an administrator, cloud-init writing the instance key at first boot.
 tests:
   - name: root authorized_keys changed

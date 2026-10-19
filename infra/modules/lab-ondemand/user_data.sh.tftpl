@@ -16,4 +16,4 @@ CLOUDTRAIL_BUCKET=${cloudtrail_bkt}
 ENVEOF
 aws s3 sync "s3://${boot_bucket}/bootstrap/" /opt/siemsoar/bootstrap/ --region "${region}"
 chmod -R 750 /opt/siemsoar/bootstrap
-bash /opt/siemsoar/bootstrap/${role == "manager" ? "wazuh/bootstrap_manager.sh" : "suricata/bootstrap_sensor.sh"}
+bash /opt/siemsoar/bootstrap/${lookup({ manager = "wazuh/bootstrap_manager.sh", sensor = "suricata/bootstrap_sensor.sh", target = "agent/bootstrap_target.sh" }, role)}

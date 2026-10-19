@@ -152,7 +152,7 @@ jobs:
       - name: shellcheck bootstrap and deploy scripts
         run: |
           sudo apt-get install -y shellcheck
-          shellcheck -S warning wazuh/bootstrap_manager.sh suricata/bootstrap_sensor.sh scripts/deploy_rules.sh \
+          shellcheck -S warning wazuh/bootstrap_manager.sh suricata/bootstrap_sensor.sh scripts/deploy_rules.sh \n            agent/install_wazuh_agent.sh agent/bootstrap_target.sh \
             wazuh/integrations/custom-eventbridge
 
   terraform-validate:
