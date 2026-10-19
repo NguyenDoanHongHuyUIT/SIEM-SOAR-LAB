@@ -97,3 +97,13 @@ jobs:
             INPUT=$( (terraform -chdir=$TF_DIR output -json lab 2>/dev/null || echo null) | jq -r 'if . == null then "false" else "true" end')
           fi
           terraform -chdir=$TF_DIR apply -input=false -auto-approve -var "lab_enabled=$INPUT"
+          echo "LAB_ENABLED=$INPUT" >> "$GITHUB_ENV"
+      - uses: actions/setup-python@v5
+        if: env.LAB_ENABLED == 'true'
+        with:
+          python-version: "3.12"
+      - name: Auto-stop timer covers every lab instance (also the ones this apply created)
+        if: env.LAB_ENABLED == 'true'
+        run: |
+          pip install boto3
+          python -m tools.labctl ensure-timer
