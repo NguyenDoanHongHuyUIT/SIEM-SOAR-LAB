@@ -50,7 +50,7 @@ jobs:
         with:
           terraform_version: "1.10.5"
           terraform_wrapper: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: python -m tools.gen_asl --check
@@ -98,7 +98,7 @@ jobs:
           fi
           terraform -chdir=$TF_DIR apply -input=false -auto-approve -var "lab_enabled=$INPUT"
           echo "LAB_ENABLED=$INPUT" >> "$GITHUB_ENV"
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         if: env.LAB_ENABLED == 'true'
         with:
           python-version: "3.12"
