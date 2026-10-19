@@ -449,6 +449,42 @@ def test_guardduty_latency_uses_the_latest_activity_of_a_recurring_finding():
     assert lat["p50"] == 1067.38  # 17.8 min from the last activity, not 5.4 h from the first occurrence
 
 
+def test_clopper_pearson_matches_reference_values():
+    """Exact binomial intervals; references: (alpha/2)^(1/n) for k = n, and R binom.test(7, 9)$conf.int."""
+    assert ev.clopper_pearson(5, 5) == (0.478, 1.0)
+    assert ev.clopper_pearson(20, 20) == (0.832, 1.0)
+    assert ev.clopper_pearson(0, 10) == (0.0, 0.308)
+    assert ev.clopper_pearson(7, 9) == (0.4, 0.972)      # R: 0.3999064 0.9718550
+    assert ev.clopper_pearson(0, 0) is None and ev.clopper_pearson(3, 2) is None
+
+
+def test_rates_are_reported_with_their_interval():
+    run = {**RUNS[0], "run_id": "run-x", "siem_alerts": [{"rule_id": "100100", "timestamp": "2026-10-06T09:59:55Z"}]}
+    m = ev.compute_metrics([], [run], {})
+    b = m["detection_quality"]["rules"]["100100"]
+    assert b["recall"] == 1.0 and b["recall_ci95"] == (0.025, 1.0)
+    assert "1.0 [0.025–1.0]" in ev.render_markdown(m)
+
+
+def test_variant_coverage_counts_public_tests_run_and_detected():
+    index = {"ref": "388942adbd9641f4dfdcf079d7efe9a75ec0ac43", "tests": {
+        "g1": {"technique": "T1053.003", "test_number": 3}, "g2": {"technique": "T1053.003", "test_number": 4},
+        "g3": {"technique": "T1053.003", "test_number": 1}, "g4": {"technique": "T1087.001", "test_number": 1}}}
+    scenarios = {"cron-a": {"atomic": {"test_guid": "g1"}}, "cron-b": {"atomic": {"test_guid": "g2"}},
+                 "enum": {"atomic": {"test_guid": "g4"}}}
+    base = {"malicious": True, "started_at": "2026-10-19T10:00:00Z", "ended_at": "2026-10-19T10:00:10Z"}
+    runs = [{**base, "run_id": "r1", "scenario": "cron-a", "expect": [{"source": "wazuh", "rule_id": "100150"}],
+             "siem_alerts": [{"rule_id": "100150"}]},
+            {**base, "run_id": "r2", "scenario": "cron-b", "expect": [{"source": "wazuh", "rule_id": "100150"}],
+             "siem_alerts": []},
+            {**base, "run_id": "r3", "scenario": "enum", "expect": [], "siem_alerts": []},   # observation only
+            {**base, "run_id": "r4", "scenario": "cron-b", "expect": [{"source": "wazuh", "rule_id": "1"}]}]  # unobserved
+    v = ev.variant_coverage(runs, [], {}, scenarios, index)
+    assert v["techniques"] == {"T1053.003": {"in_index": 3, "run": 2, "detected": 1},
+                               "T1087.001": {"in_index": 1, "run": 1, "detected": 0}}
+    assert v["index_tests"] == 4 and v["index_techniques"] == 2
+
+
 def test_manual_steps_are_read_from_the_case_timeline():
     assert ev.manual_steps({"approved_at": "t1", "restoring_at": "t2"}) == 2
     assert ev.manual_steps({"approved_at": "t1"}) == 1
