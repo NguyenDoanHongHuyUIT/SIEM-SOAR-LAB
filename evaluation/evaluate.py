@@ -63,8 +63,12 @@ def summary(values: list[float]) -> dict:
 
 def attribute(case: dict, runs: list[dict]) -> tuple[dict | None, dict | None]:
     """(run, matched expectation) for a case: the single run it belongs to (catalog.case_in_run) and the expectation
-    on its rule, if the run listed one. Overlapping runs on the same target make the case ambiguous: (None, None)."""
+    on its rule, if the run listed one. Overlapping runs on the same target make the case ambiguous: (None, None).
+    A run whose execution failed is a candidate only when no executed run claims the case: it carried out nothing
+    (lab session 3: a Stratus run that never started had no target, so its window also covered the next run's case)."""
     owners = [r for r in runs if case_in_run(case, r)]
+    if len(owners) > 1:
+        owners = [r for r in owners if not execution_failed(r)] or owners
     if len(owners) != 1:
         return None, None
     run = owners[0]

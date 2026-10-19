@@ -148,6 +148,19 @@ def test_a_run_specific_target_has_no_late_arrival_cut_off_and_other_targets_nev
     assert catalog.case_in_run(late, shared) is False
 
 
+def test_a_run_that_never_executed_does_not_steal_the_next_runs_case():
+    gd = {"source": "guardduty", "rule_id": "Stealth:IAMUser/CloudTrailLoggingDisabled", "case": True}
+    failed = {"run_id": "run-a", "malicious": True, "kind": "stratus", "techniques": ["T1685.002"], "expect": [gd],
+              "started_at": "2026-10-19T01:33:57Z", "ended_at": "2026-10-19T01:33:59Z", "settle_seconds": 1800,
+              "result": {"pass": False, "checks": [{"name": "execution", "ok": False, "detail": "WinError 2"}]}}
+    done = {**failed, "run_id": "run-b", "started_at": "2026-10-19T01:34:20Z", "ended_at": "2026-10-19T01:35:25Z",
+            "target": "lab-victim/AKIAIOSFODNN7EXAMPLE", "target_unique": True, "result": {"pass": True, "checks": []}}
+    case = _case(1, rule=gd["rule_id"], source="guardduty", created="2026-10-19T01:49:40Z",
+                 resource_id="lab-victim/AKIAIOSFODNN7EXAMPLE")
+    q = ev.compute_metrics([case], [failed, done], {})["rule_quality"][gd["rule_id"]]
+    assert q["tp"] == 1 and q["fn"] == 0
+
+
 def test_a_cloud_target_has_no_siem_layer_to_read():
     r = object.__new__(runner.Runner)
     r.ssm_run = lambda *a, **k: pytest.fail("no Wazuh query for an IAM key target")
