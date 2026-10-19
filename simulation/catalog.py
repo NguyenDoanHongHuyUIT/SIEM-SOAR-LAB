@@ -220,7 +220,11 @@ def case_in_run(case: dict, run: dict) -> bool:
     """A case belongs to a run when it carries the run's run_id, or was created on the run's target (resource id or
     the Wazuh agent name it was resolved from) inside [start - 5 s, end + settle]. Runs without a target (cloud
     procedures) match on the window only. A case the runner decided itself names its run in the actor: that is exact,
-    whereas back-to-back runs on one host have overlapping windows."""
+    whereas back-to-back runs on one host have overlapping windows.
+
+    A run whose target exists only for that run (`target_unique`, e.g. the access key created for one Stratus
+    detonation) needs no end bound: whatever names that target belongs to the run, however late the detector reports
+    it. The settle window then only says how long the runner waits before its live verdict."""
     from datetime import timedelta
     if case.get("run_id"):
         return case["run_id"] == run.get("run_id")
@@ -231,8 +235,11 @@ def case_in_run(case: dict, run: dict) -> bool:
         return False
     target = run.get("target")
     on_target = target is None or target in (case.get("resource_id"), (case.get("resource") or {}).get("agent_name"))
-    settle = timedelta(seconds=int(run.get("settle_seconds", 120)))
-    return on_target and start - timedelta(seconds=5) <= created <= end + settle
+    if not on_target or created < start - timedelta(seconds=5):
+        return False
+    if target is not None and run.get("target_unique"):
+        return True
+    return created <= end + timedelta(seconds=int(run.get("settle_seconds", 120)))
 
 
 # --------------------------------------------------------------------------- scenarios <-> rules

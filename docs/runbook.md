@@ -66,7 +66,7 @@ Mọi rule vào repo ở **shadow** (đề cương 5.3: rule mới chỉ ghi nh�
 8. Rollback để minh họa: `git revert` PR promote → merge → rule về shadow.
 
 Trước khi chạy `aws-stratus-cloudtrail-stop`, đặt `SIEMSOAR_LAB_ACCOUNT_ID` thành account ID lab đã được duyệt và xác nhận AWS credentials hiện tại trỏ đúng account (cần binary `stratus`). Runner từ chối account không khớp. Trình tự: `stratus warmup` bằng credential của người vận hành (Stratus tự tạo trail `stratus-red-team-*`), runner xóa key cũ và tạo access key mới cho IAM user vùng simulation (`SIEMSOAR_SIM_USER`, mặc định `lab-victim`, chỉ được `cloudtrail:StopLogging` trên trail của Stratus), `stratus detonate` bằng key đó, rồi `stratus cleanup` bằng credential người vận hành. GuardDuty sinh `Stealth:IAMUser/CloudTrailLoggingDisabled` trỏ tới key của `lab-victim` → case với plan `iam_key_disable`.
-GuardDuty cần tới khoảng 18 phút (đo ở phiên 2), nên kịch bản chờ 30 phút. Stratus kiểm tra đăng nhập bằng
+GuardDuty cần tới khoảng 18 phút (đo ở phiên 2; AWS không công bố giới hạn trên). Runner chờ tối đa 30 phút và dừng ngay khi case xuất hiện. Đánh giá không cắt theo thời gian: key được tạo riêng cho lượt chạy, nên finding nào nêu key đó đều thuộc lượt ấy, dù đến muộn. Stratus kiểm tra đăng nhập bằng
 `ec2:DescribeAccountAttributes` (policy của `lab-victim` cho phép đúng lệnh đọc này). Bước cleanup xóa trail bằng
 key người vận hành nên GuardDuty cũng báo một finding cùng loại về key đó. Case ấy **chỉ thông báo** (user ngoài
 tiền tố `lab-`), chỉ cần Acknowledge, và không được tính vào lượt chạy.

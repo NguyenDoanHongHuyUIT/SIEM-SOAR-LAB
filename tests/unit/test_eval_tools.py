@@ -114,20 +114,61 @@ def test_match_expectations():
     bounds = {"run_id": "run-current", "started_at": "2026-10-06T10:00:00Z",
               "ended_at": "2026-10-06T10:00:10Z", "settle_seconds": 30}
     ok = runner.match_expectations([{"source": "wazuh", "rule_id": "100100", "case": True},
-                                    {"source": "wazuh", "rule_id": "100101", "case": False}], cases, **bounds)
+                                    {"source": "wazuh", "rule_id": "100101", "case": False}], cases, bounds)
     assert all(c["ok"] for c in ok)
     bad = runner.match_expectations([{"source": "wazuh", "rule_id": "100100", "case": False},
                                      {"source": "wazuh", "rule_id": "9", "case": True},
                                      {"source": "wazuh", "rule_id": "9", "case": True, "optional": True}],
-                                    cases, **bounds)
+                                    cases, bounds)
     assert [c["ok"] for c in bad] == [False, False, True]
     stale = [{"case_id": "C0", "rule_id": "100100", "source": "wazuh", "run_id": "run-old"}]
     assert not runner.match_expectations([{"source": "wazuh", "rule_id": "100100", "case": True}],
-                                         stale, **bounds)[0]["ok"]
+                                         stale, bounds)[0]["ok"]
     late = [{"case_id": "C2", "rule_id": "100100", "source": "wazuh",
              "created_at": "2026-10-06T10:00:41Z"}]
     assert not runner.match_expectations([{"source": "wazuh", "rule_id": "100100", "case": True}],
-                                         late, **bounds)[0]["ok"]
+                                         late, bounds)[0]["ok"]
+
+
+def test_a_run_specific_target_has_no_late_arrival_cut_off_and_other_targets_never_match():
+    """Stratus: the victim key exists for one run only. GuardDuty's delay is not bounded by any documented figure, so
+    a finding naming that key belongs to the run whenever it arrives; the operator's cleanup finding (same rule, other
+    key, inside the window) never does - neither for the live verdict nor for the evaluation."""
+    run = {"run_id": "run-s", "started_at": "2026-10-19T01:34:20Z", "ended_at": "2026-10-19T01:35:27Z",
+           "settle_seconds": 1800, "target": "lab-victim/AKIAVICTIM", "target_unique": True}
+    gd = {"rule_id": "Stealth:IAMUser/CloudTrailLoggingDisabled", "source": "guardduty"}
+    late = {**gd, "case_id": "C-late", "resource_id": "lab-victim/AKIAVICTIM", "created_at": "2026-10-19T03:00:00Z"}
+    operator = {**gd, "case_id": "C-op", "resource_id": "Huy/AKIAOPERATOR", "created_at": "2026-10-19T01:50:00Z"}
+    before = {**late, "case_id": "C-old", "created_at": "2026-10-19T01:00:00Z"}
+    expect = [{**gd, "case": True}]
+    assert [catalog.case_in_run(c, run) for c in (late, operator, before)] == [True, False, False]
+    assert runner.match_expectations(expect, [operator], run)[0]["ok"] is False
+    assert runner.match_expectations(expect, [operator, late], run)[0]["detail"] == ["C-late"]
+    shared = {**run, "target_unique": False}  # a lab host is reused by every run: the window still bounds it
+    assert catalog.case_in_run(late, shared) is False
+
+
+def test_the_runner_stops_waiting_once_every_expected_case_exists(monkeypatch):
+    from types import SimpleNamespace
+    run = {"run_id": "run-w", "started_at": "2026-10-19T01:34:20Z", "ended_at": "2026-10-19T01:35:27Z",
+           "settle_seconds": 1800, "target": "lab-victim/AKIAVICTIM", "target_unique": True}
+    case = {"case_id": "C1", "rule_id": "R", "source": "guardduty", "resource_id": "lab-victim/AKIAVICTIM",
+            "created_at": "2026-10-19T01:50:00Z"}
+    polls = iter([[], [], [case]])
+    r = object.__new__(runner.Runner)
+    r.store = SimpleNamespace(list_cases=lambda: next(polls))
+    r.log = lambda msg: None
+    slept = []
+    monkeypatch.setattr(runner.time, "sleep", slept.append)
+    assert r.await_detections([{"source": "guardduty", "rule_id": "R", "case": True}], run) == [case]
+    assert slept == [30, 30]
+    # a shadow (case: false) expectation is only proven by the full window: no early exit
+    now = [0.0]
+    monkeypatch.setattr(runner.time, "time", lambda: now[0])
+    monkeypatch.setattr(runner.time, "sleep", lambda s: now.__setitem__(0, now[0] + s))
+    r.store = SimpleNamespace(list_cases=lambda: [])
+    r.await_detections([{"source": "wazuh", "rule_id": "S", "case": False}], {**run, "settle_seconds": 120})
+    assert now[0] == 120
 
 
 # ------------------------------------------------------------------ evaluation metrics

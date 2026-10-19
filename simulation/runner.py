@@ -59,27 +59,19 @@ def render(command: str, run_id: str, context: dict[str, str] | None = None) -> 
     return re.sub(r"\{(\w+)\}", lambda m: values.get(m.group(1), m.group(0)), command)
 
 
-def match_expectations(expect: list[dict], cases: list[dict], run_id: str,
-                       started_at: str, ended_at: str, settle_seconds: int) -> list[dict]:
-    """Compare expectations with observed cases. A `case: false` expectation fails when a case exists."""
-    start, end = parse_iso(started_at), parse_iso(ended_at)
-    if start is None or end is None or settle_seconds < 0:
+def match_expectations(expect: list[dict], cases: list[dict], run: dict) -> list[dict]:
+    """Compare expectations with observed cases. A `case: false` expectation fails when a case exists.
+
+    Cases are attributed exactly as the evaluation does (catalog.case_in_run: run_id, scripted actor, target + window):
+    a same-rule case on another resource (e.g. the operator's key in Stratus' cleanup) is not this run's detection."""
+    if parse_iso(run.get("started_at")) is None or parse_iso(run.get("ended_at")) is None \
+            or int(run.get("settle_seconds", 120)) < 0:
         raise ValueError("scenario run has invalid time bounds")
 
     checks = []
     for e in expect:
-        hits = []
-        for case in cases:
-            if str(case["rule_id"]) != str(e["rule_id"]) or case["source"] != e["source"]:
-                continue
-            if case.get("run_id"):
-                belongs = case["run_id"] == run_id
-            else:
-                created = parse_iso(case.get("created_at"))
-                belongs = created is not None and start - timedelta(seconds=5) <= created <= end + timedelta(
-                    seconds=settle_seconds)
-            if belongs:
-                hits.append(case)
+        hits = [case for case in cases if str(case["rule_id"]) == str(e["rule_id"]) and case["source"] == e["source"]
+                and case_in_run(case, run)]
         want = e.get("case", True)
         ok = bool(hits) == want
         if not ok and e.get("optional"):
@@ -157,6 +149,22 @@ class Runner:
         if not ids:
             raise SystemExit(f"no running instance with siemsoar:role={role}; start the lab: soarctl lab up")
         return ids[0]
+
+    def await_detections(self, expect: list[dict], run: dict, poll: int = 30) -> list[dict]:
+        """Wait up to the settle window for the expected cases. Stops early only when every expectation wants a case
+        and all are there: a `case: false` expectation (shadow rule, benign run) needs the whole window to be proven."""
+        settle = run["settle_seconds"]
+        self.log(f"waiting up to {settle}s for detections")
+        deadline = time.time() + settle
+        early = bool(expect) and all(e.get("case", True) for e in expect)
+        while True:
+            cases = self.store.list_cases()
+            if early and all(c["ok"] for c in match_expectations(expect, cases, run)):
+                self.log(f"all expected cases present after {settle - max(0, int(deadline - time.time()))}s")
+                return cases
+            if time.time() >= deadline:
+                return cases
+            time.sleep(min(poll, max(1, deadline - time.time())))
 
     def rules_release(self) -> str | None:
         """The rule release deployed on the lab (releases/current.json): every run is measured against one version."""
@@ -270,7 +278,8 @@ class Runner:
                 subprocess.run(["stratus", "warmup", tech], check=True, timeout=600)  # operator builds the infra
                 creds = self.victim_credentials()
                 details.update(detonated_by=creds["user"], access_key_id=creds["AWS_ACCESS_KEY_ID"],
-                               target=f'{creds["user"]}/{creds["AWS_ACCESS_KEY_ID"]}')  # the case's resource id
+                               target=f'{creds["user"]}/{creds["AWS_ACCESS_KEY_ID"]}',  # the case's resource id
+                               target_unique=True)  # a key created for this run only: no late-arrival cut-off
                 env = {k: v for k, v in os.environ.items() if not k.startswith("AWS_") or k == "AWS_REGION"}
                 env.update({k: creds[k] for k in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY")},
                            AWS_REGION=self.aws.region())
@@ -453,14 +462,11 @@ class Runner:
         run["settle_seconds"] = int(s.get("settle_seconds", 120))
         run["details"] = {k: v for k, v in details.items() if k != "instance"}
         run["target"] = details.get("instance") or details.get("target")
+        run["target_unique"] = bool(details.get("target_unique"))
         self.store.put_run(run)
         if kind != "robustness" and self.wait and "result" not in run:
-            settle = run["settle_seconds"]
-            self.log(f"waiting {settle}s for detections")
-            time.sleep(settle)
-            cases = self.store.list_cases()
-            checks = match_expectations(s.get("expect", []), cases, run_id,
-                                       run["started_at"], run["ended_at"], settle)
+            cases = self.await_detections(s.get("expect", []), run)
+            checks = match_expectations(s.get("expect", []), cases, run)
             run["siem_alerts"] = self.siem_alerts(run)
             run["observed"] = observe_expectations(s.get("expect", []), run["siem_alerts"])
             checks += [{"name": f"{key} alert observed in the SIEM", "ok": ok, "detail": ""}

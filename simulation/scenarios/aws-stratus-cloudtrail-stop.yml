@@ -9,7 +9,10 @@ documented_detection:     # Stratus' own page names the GuardDuty finding this t
   url: https://stratus-red-team.cloud/attack-techniques/AWS/aws.defense-evasion.cloudtrail-stop/
 expect:
   - {source: guardduty, rule_id: 'Stealth:IAMUser/CloudTrailLoggingDisabled', case: true}
-settle_seconds: 1800      # lab session 2: GuardDuty raised a CloudTrailLoggingDisabled finding 18 min after the API call
+settle_seconds: 1800      # how long the runner waits for its live verdict (it stops as soon as the case exists).
+                          # Not a cut-off for the evaluation: the run's target is a key created for this run only,
+                          # so a later finding naming it is still this run's detection (catalog.case_in_run).
+                          # Measured GuardDuty delay for this finding: 18 min (session 2).
 notes: >-
   Stratus warms up (creates its own trail) with the operator's credentials and detonates with lab-victim's key.
   Its cleanup deletes the trail with the operator's key, which GuardDuty also reports (same finding type, the
