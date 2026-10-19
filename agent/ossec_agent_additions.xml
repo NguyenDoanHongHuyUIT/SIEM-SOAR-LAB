@@ -5,12 +5,22 @@
        the first change (measured on the lab and reproduced on wazuh-manager 4.14.8: 1 alert for 3 changes). -->
   <syscheck>
     <directories realtime="yes" check_all="yes" report_changes="yes">/srv/lab</directories>
-    <directories realtime="yes" check_all="yes" recursion_level="0" restrict="^/etc/passwd$|^/etc/shadow$|^/etc/sudoers$">/etc</directories>
+    <directories realtime="yes" check_all="yes" recursion_level="0" restrict="^/etc/passwd$|^/etc/shadow$|^/etc/sudoers$|^/etc/profile$|^/etc/bash.bashrc$|^/etc/crontab$">/etc</directories>
     <directories realtime="yes" check_all="yes" recursion_level="0" restrict="^/etc/ssh/sshd_config$">/etc/ssh</directories>
     <!-- persistence through SSH keys (rule 100104): root and the Ubuntu AMI default user -->
     <directories realtime="yes" check_all="yes" recursion_level="0" restrict="/authorized_keys$">/root/.ssh,/home/ubuntu/.ssh</directories>
+    <!-- persistence locations (T1053.003 cron, T1543.002 systemd, T1546.004 shell configuration) -->
+    <directories realtime="yes" check_all="yes" recursion_level="0">/etc/cron.d,/var/spool/cron/crontabs,/etc/systemd/system,/etc/profile.d</directories>
+    <directories realtime="yes" check_all="yes" recursion_level="0" restrict="^/root/.bashrc$|^/root/.profile$|^/root/.bash_profile$|^/root/.bash_logout$">/root</directories>
     <frequency>3600</frequency>
   </syscheck>
+
+  <!-- Linux audit log (auditd, rules in agent/siemsoar.rules): log format documented by Wazuh
+       https://documentation.wazuh.com/current/user-manual/capabilities/system-calls-monitoring/audit-configuration.html -->
+  <localfile>
+    <log_format>audit</log_format>
+    <location>/var/log/audit/audit.log</location>
+  </localfile>
 
   <!-- Not repeated here on purpose: the stock Linux agent already reads /var/log/auth.log and /var/log/syslog
        (etc/templates/config/generic/localfile-logs/syslog-logs.template in Wazuh 4.14). A second <localfile> for the
