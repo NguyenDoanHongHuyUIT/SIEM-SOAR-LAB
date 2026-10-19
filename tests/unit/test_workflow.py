@@ -273,6 +273,33 @@ def test_restore_blocked_terminally_after_max_attempts(store, sfn):
     assert case["failure_error"] == "RestoreBlocked" and case["restore_attempts"] == 3
 
 
+def test_a_failed_case_is_recovered_by_hand_completely_and_audited(store, sfn, monkeypatch):
+    """Lab 2026-10-19: a new alert merged after isolation blocked restore three times, the case FAILED with the host
+    contained. `soarctl recover` (human-gated in the CLI) restores groups AND role sessions, verifies, and audits."""
+    from tools import soarctl
+    lab = Lab()
+    cid = start(store, ev.guardduty_instance(lab.iid, fid="first"))
+    queue = gates("approve", "restore_tp", "restore_tp", "restore_tp")
+
+    def cb(gate, data, token):
+        if gate == "restore" and len(queue.remaining) == 3:
+            ingest_handler.handler(ev.guardduty_instance(lab.iid, fid="after-isolation"))  # merged into the case
+        queue(gate, data, token)
+
+    outcome, _, _ = asl_runner.run(cid, CFG, cb)
+    case = store.get_case(cid)
+    assert case["status"] == "FAILED" and case["failure_error"] == "RestoreBlocked" and case["merged_at"]
+    assert lab.sgs() != [lab.sg] and response.has_revoke_policy(lab.role)   # left contained
+
+    out = soarctl.recover(store, cid, "cli:UTEST", "the merged alert was our own test run", "arn:aws:iam::1:user/op")
+    assert out["verified"] and lab.sgs() == [lab.sg] and not response.has_revoke_policy(lab.role)
+    assert response.CASE_TAG not in response.describe_instance(lab.iid)["tags"]
+    [entry] = [a for a in store.list_audit(cid) if a["action"] == "manual_recovery"]
+    assert entry["actor"] == "cli:UTEST" and entry["detail"]["reason"].startswith("the merged alert")
+    with pytest.raises(ValueError, match="not held by this case"):
+        soarctl.recover(store, cid, "cli:UTEST", "again", "arn")  # nothing left to recover
+
+
 def test_restore_detects_iac_drift_in_saved_state(store, sfn):
     lab = Lab(tags={"iac:security_groups": "sg-0000000000000dead"})
     cid = start(store, ev.guardduty_instance(lab.iid))

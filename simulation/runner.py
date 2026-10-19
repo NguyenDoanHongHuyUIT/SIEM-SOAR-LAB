@@ -425,9 +425,10 @@ class Runner:
                        [a["action"] for a in self.store.list_audit(case_id)], "detail": ""}]
         finally:
             self._set_fault("contain", "")
-        pre, _ = evidence.get_json(case_id, "pre_action_state")  # manual recovery a human would do
-        response.restore_instance_sgs(iid, pre["security_groups"],
-                                      groups_by_eni={n["id"]: n["groups"] for n in pre.get("network_interfaces", [])})
+        pre, _ = evidence.get_json(case_id, "pre_action_state")  # the recovery `soarctl recover` performs
+        response.restore_ec2_from_state(iid, pre)
+        restored, summary = response.ec2_matches_state(iid, pre)
+        checks.append({"name": "recovered after the test", "ok": restored, "detail": summary})
         return checks
 
     def check_slack_down(self, s: dict, run_id: str) -> list[dict]:

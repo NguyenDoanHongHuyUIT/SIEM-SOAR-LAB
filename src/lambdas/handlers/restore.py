@@ -69,13 +69,8 @@ def _execute(case, event, store):
     verdict = _verdict(event)
     out: dict = {"verdict": verdict}
     if plan["type"] == PLAN_EC2:
-        iid = plan["params"]["instance_id"]
-        per_eni = {n["id"]: n["groups"] for n in pre.get("network_interfaces", [])}
-        out["security_groups"] = response.restore_instance_sgs(iid, pre["security_groups"], dry, per_eni)
-        if pre.get("role_name"):
-            out["sessions"] = response.restore_role_sessions(pre["role_name"], dry)
-        if case.get("instance_stopped") and pre.get("state") == "running":
-            out["start"] = response.set_instance_running(iid, True, dry)
+        out.update(response.restore_ec2_from_state(plan["params"]["instance_id"], pre, dry,
+                                                   start=bool(case.get("instance_stopped"))))
     else:
         user, key = pre["user_name"], pre["access_key_id"]
         out["sessions"] = response.restore_user_sessions(user, dry)
@@ -91,11 +86,8 @@ def _verify(case, event, store):
     cid, plan, dry = case["case_id"], case["response_plan"], dry_run_of(event)
     pre, _ = evidence.get_json(cid, "pre_action_state")
     if plan["type"] == PLAN_EC2:
-        cur = response.describe_instance(plan["params"]["instance_id"])
-        expected = {n["id"]: n["groups"] for n in pre.get("network_interfaces", [])}
-        groups_ok = (response.eni_groups(cur) == expected) if expected else cur["security_groups"] == pre["security_groups"]
-        ok = dry or (groups_ok and not (pre.get("role_name") and response.has_revoke_policy(pre["role_name"])))
-        summary = f"security groups {expected or cur['security_groups']} restored (now {response.eni_groups(cur)})"
+        restored, summary = response.ec2_matches_state(plan["params"]["instance_id"], pre)
+        ok = dry or restored
     else:
         keys = response.list_keys(pre["user_name"])
         want_fp = _verdict(event) == "false_positive"

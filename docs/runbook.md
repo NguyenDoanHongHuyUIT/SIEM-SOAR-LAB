@@ -93,7 +93,8 @@ Audit ghi cả người duyệt (`cli:<member id>`) lẫn danh tính AWS đã ch
 ## 8. Khi có sự cố
 | Triệu chứng | Làm gì |
 |---|---|
-| Email "workflow failed" / alarm `workflow-failed` | `soarctl show <case>`: xem `failure_error`, `safe_state`. Tài nguyên giữ nguyên trạng thái an toàn; khôi phục thủ công theo `s3://…-evidence-…/cases/<case>/pre_action_state.json` |
+| Email "workflow failed" / alarm `workflow-failed` | `soarctl show <case>`: xem `failure_error`, `safe_state`, audit (`restore_blocked.reasons`). Tài nguyên giữ nguyên trạng thái an toàn. Khi đã hiểu nguyên nhân: `soarctl recover <case> --approver <member id> --reason "…"` (cổng người như `decide`; kiểm hash `pre_action_state`, trả SG mọi ENI, gỡ thu hồi phiên role, xác minh, ghi audit `manual_recovery`). Case IAM: xem key trong IAM Console |
+| Runner báo "contained by case …" | Máy đang bị cô lập: quyết định/khôi phục case đó trước. Không chạy kịch bản trên máy bị cô lập (alert mới sẽ chặn restore, đúng thiết kế) |
 | Circuit breaker mở (`BreakerOpen`) | Có >N lần cách ly/giờ: nghi ngờ rule quá nhiễu. Demote rule về shadow, xử lý thủ công |
 | Alarm DLQ không rỗng | Alert tới EventBridge nhưng ingest lỗi: xem `siemsoar-ingest-dlq`, sửa, replay |
 | Lab quên tắt | Timer sẽ stop; vẫn nên `lab-session → down` |
