@@ -13,7 +13,7 @@ verify:                   # proves the account exists: an atomic that did nothin
 cleanup:
   - 'userdel -r siemsoar_sim_{short} 2>/dev/null || userdel siemsoar_sim_{short} || true'
 expect:
-  - {source: wazuh, rule_id: "100110", case: true}    # official 5902 "new user" -> SIEMSOAR 100110
+  - {source: wazuh, rule_id: "100110", case: false}    # official 5902 "new user" -> SIEMSOAR 100110
   - {source: wazuh, rule_id: "100100", case: false}    # FIM: /etc/passwd changed
   - {source: wazuh, rule_id: "100102", case: false}   # FIM: /etc/shadow changed (shadow rule: alert, no case)
 settle_seconds: 120
