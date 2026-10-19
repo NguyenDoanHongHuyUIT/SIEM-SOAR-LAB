@@ -241,7 +241,10 @@ class Runner:
         """Atomic Red Team test (unmodified upstream YAML) executed on the sensor by scripts/run_atomic.py.
 
         Order: `prepare` (e.g. back up a file the atomic changes), the atomic, `verify` (proves the behaviour really
-        happened: a run whose atomic did nothing is an execution error, never a false negative), then `cleanup`.
+        happened: a run whose atomic did nothing is an execution error, never a false negative), then, whatever
+        happened, the test's own `cleanup_command` (run_atomic.py --cleanup, the Atomic Red Team convention) followed by
+        the scenario's `cleanup`. Lab 2026-10-19: without the upstream cleanup the cron and systemd persistence of
+        T1053.003/T1543.002 stayed installed on the sensor after their runs.
         A missing prerequisite makes run_atomic exit 3, which fails the SSM command: also an execution error.
         """
         iid = self.attack_target(EXEC_ROLES[s.get("target", "sensor")])
@@ -253,6 +256,7 @@ class Runner:
         cmd = (f"HOME=/root ART_REF={shlex.quote(art['ref'])} python3 /opt/siemsoar/bootstrap/scripts/run_atomic.py "
                f"{shlex.quote(art['technique'])} {shlex.quote(art['test_guid'])} {args} --timeout {timeout}").rstrip()
         report: dict = {}
+        cleanup: dict = {}
         try:
             if s.get("prepare"):
                 self.ssm_run(iid, [render(c, run_id, ctx) for c in s["prepare"]])
@@ -264,9 +268,16 @@ class Runner:
             for check in s.get("verify", []):
                 self.ssm_run(iid, [render(check, run_id, ctx)])
         finally:
+            try:
+                out = self.ssm_run(iid, [f"{cmd} --cleanup"], timeout=timeout + 60)
+                cleanup = json.loads(out.strip().splitlines()[-1])
+            except Exception as err:  # noqa: BLE001 - reported, and the scenario cleanup must still run
+                cleanup = {"error": str(err)[:300]}
+                self.log(f"atomic cleanup failed on {iid}: {err}")
             if s.get("cleanup"):
                 self.ssm_run(iid, [render(c, run_id, ctx) for c in s["cleanup"]])
-        return {"instance": iid, "atomic": {k: art[k] for k in ("technique", "test_guid")}, "report": report}
+        return {"instance": iid, "atomic": {k: art[k] for k in ("technique", "test_guid")}, "report": report,
+                "cleanup": {k: cleanup.get(k) for k in ("exit_code", "timed_out", "error") if k in cleanup}}
 
     def exec_guardduty_sample(self, s: dict, run_id: str) -> dict:
         gd = self.aws.client("guardduty")

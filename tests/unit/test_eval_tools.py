@@ -615,7 +615,8 @@ def test_atomic_scenario_runs_upstream_atomic_then_verifies_then_cleans_up(monke
     out = r.exec_atomic(s, "run-20261007-host-useradd-beef")
     assert "run_atomic.py T1136.001 40d8eabd-e394-46f6-8785-b9bfa1d011d2 --arg username=siemsoar_sim_beef" in calls[0]
     assert calls[0].startswith("HOME=/root ART_REF=388942adbd9641f4dfdcf079d7efe9a75ec0ac43 python3 ")
-    assert calls[1] == "getent passwd siemsoar_sim_beef" and calls[2].startswith("userdel -r siemsoar_sim_beef")
+    assert calls[1] == "getent passwd siemsoar_sim_beef" and calls[2].endswith("--timeout 120 --cleanup")
+    assert calls[3].startswith("userdel -r siemsoar_sim_beef")
     assert out["atomic"]["technique"] == "T1136.001"
 
 
@@ -623,14 +624,25 @@ def test_atomic_scenario_backs_up_before_and_restores_after(monkeypatch):
     r, calls = _runner_with_fake_ssm(monkeypatch)
     r.exec_atomic(runner.load_scenarios()["host-sudoers"], "run-x-beef")
     assert calls[0].startswith("cp -p /etc/sudoers /var/tmp/") and "run_atomic.py T1548.003" in calls[1]
-    assert calls[-1].startswith("cp -p /var/tmp/sudoers.siemsoar.bak /etc/sudoers")
+    assert calls[-2].endswith(" --cleanup") and "run_atomic.py T1548.003" in calls[-2]  # the upstream cleanup
+    assert calls[-1].startswith("cp -p /var/tmp/sudoers.siemsoar.bak /etc/sudoers")     # then the scenario's
 
 
 def test_atomic_failure_is_an_execution_error_not_a_silent_false_negative(monkeypatch):
     r, calls = _runner_with_fake_ssm(monkeypatch, fail_verify=True)
     with pytest.raises(RuntimeError):
         r.exec_atomic(runner.load_scenarios()["host-useradd"], "run-x-beef")
-    assert calls[-1].startswith("userdel")  # cleanup still ran
+    assert calls[-2].endswith(" --cleanup") and calls[-1].startswith("userdel")  # both cleanups still ran
+
+
+def test_the_upstream_cleanup_runs_for_scenarios_that_declare_none(monkeypatch):
+    """host-cron-crond relies on the test's own cleanup_command; it must run after verify even when nothing else
+    is declared (lab 2026-10-19: /etc/cron.d/persistevil and the systemd unit were left behind)."""
+    r, calls = _runner_with_fake_ssm(monkeypatch)
+    out = r.exec_atomic(runner.load_scenarios()["host-cron-crond"], "run-x-beef")
+    assert "run_atomic.py T1053.003 078e69eb" in calls[0] and not calls[0].endswith("--cleanup")
+    assert calls[-1].endswith(" --cleanup") and "078e69eb-d9fb-450e-b9d0-2e118217c846" in calls[-1]
+    assert "cleanup" in out
 
 
 def test_atomic_source_requires_a_commit_and_caches_by_commit(tmp_path, monkeypatch):
