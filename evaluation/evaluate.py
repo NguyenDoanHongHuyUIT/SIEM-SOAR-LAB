@@ -191,8 +191,40 @@ def classify(cases: list[dict], runs: list[dict], canary_rules: frozenset[str] =
         fp = b["fp"] + b["human_fp"] + b["shadow_violation"]
         b["precision"] = round(b["tp"] / (b["tp"] + fp), 3) if b["tp"] + fp else None
         b["recall"] = round(b["tp"] / (b["tp"] + b["fn"]), 3) if b["tp"] + b["fn"] else None
+        _with_intervals(b, ("fp", "human_fp", "shadow_violation"))
     canary["pipeline_ok"] = (canary["observed"] >= canary["expected"]) if canary["expected"] else None
     return {"rules": rules, "labels": labels, "canary": canary, "invalid_runs": sorted(invalid)}
+
+
+def _binom_cdf(k: int, n: int, p: float) -> float:
+    return sum(math.comb(n, i) * p ** i * (1 - p) ** (n - i) for i in range(k + 1))
+
+
+def clopper_pearson(k: int, n: int, confidence: float = 0.95) -> tuple[float, float] | None:
+    """Exact (Clopper-Pearson) confidence interval of a proportion k/n: the bounds solve
+    P(X >= k | p_lo) = alpha/2 and P(X <= k | p_hi) = alpha/2 (Clopper & Pearson, Biometrika 26, 1934). Solved by
+    bisection on the binomial CDF, so no statistics package is needed. With k = n the lower bound is (alpha/2)^(1/n):
+    5/5 detections only show a rate >= 0.478 at 95 %."""
+    if n <= 0 or not 0 <= k <= n:
+        return None
+    alpha = 1 - confidence
+
+    def solve(f, lo=0.0, hi=1.0):
+        for _ in range(80):
+            mid = (lo + hi) / 2
+            lo, hi = (mid, hi) if f(mid) else (lo, mid)
+        return (lo + hi) / 2
+
+    lower = 0.0 if k == 0 else solve(lambda p: 1 - _binom_cdf(k - 1, n, p) < alpha / 2)
+    upper = 1.0 if k == n else solve(lambda p: _binom_cdf(k, n, p) > alpha / 2)
+    return round(lower, 3), round(upper, 3)
+
+
+def _with_intervals(b: dict, fp_key: str = "fp") -> dict:
+    fp = b[fp_key] if isinstance(fp_key, str) else sum(b[k] for k in fp_key)
+    b["recall_ci95"] = clopper_pearson(b["tp"], b["tp"] + b["fn"])
+    b["precision_ci95"] = clopper_pearson(b["tp"], b["tp"] + fp)
+    return b
 
 
 def detection_quality(runs: list[dict], rules_meta: dict | None = None) -> dict:
@@ -232,7 +264,39 @@ def detection_quality(runs: list[dict], rules_meta: dict | None = None) -> dict:
     for b in rules.values():
         b["precision"] = round(b["tp"] / (b["tp"] + b["fp"]), 3) if b["tp"] + b["fp"] else None
         b["recall"] = round(b["tp"] / (b["tp"] + b["fn"]), 3) if b["tp"] + b["fn"] else None
+        _with_intervals(b)
     return {"rules": rules, "benign_runs": benign_runs, "unobserved_runs": unobserved}
+
+
+def variant_coverage(runs: list[dict], cases: list[dict], labels: dict, scenarios: dict, art_index: dict) -> dict:
+    """Per technique: the public Atomic Red Team tests the pinned Linux index lists, how many distinct tests the lab
+    ran (valid malicious runs), and how many of those were detected (an expected rule alerted, or a TP case). It shows
+    how much of the public procedure space behind each claim was tried; a test run in observation (no rule expected
+    yet) counts as run, not detected. The index includes tests whose name says FreeBSD; they are counted, not hidden."""
+    guid_of = {sid: (s.get("atomic") or {}).get("test_guid") for sid, s in scenarios.items()}
+    tests = (art_index or {}).get("tests", {})
+    per: dict[str, dict] = {}
+    detected_cases = {c["case_id"] for c in cases if labels.get(c["case_id"]) == "tp"}
+    for r in runs:
+        guid = guid_of.get(r.get("scenario"))
+        if not guid or guid not in tests or not r.get("malicious") or execution_failed(r):
+            continue
+        tp_case = any(case_in_run(c, r) for c in cases if c["case_id"] in detected_cases)
+        if "siem_alerts" not in r and not tp_case:
+            continue  # never observed (e.g. the runner stopped during the wait): neither detected nor missed
+        tech = tests[guid]["technique"]
+        row = per.setdefault(tech, {"in_index": sum(1 for t in tests.values() if t["technique"] == tech),
+                                    "run": set(), "detected": set()})
+        row["run"].add(guid)
+        required = {str(e["rule_id"]) for e in r.get("expect", []) if not e.get("optional")}
+        alerted = {str(a["rule_id"]) for a in r.get("siem_alerts", [])}
+        if (required & alerted) or tp_case:
+            row["detected"].add(guid)
+    out = {t: {"in_index": v["in_index"], "run": len(v["run"]), "detected": len(v["detected"])}
+           for t, v in sorted(per.items())}
+    techniques_in_index = len({t["technique"] for t in tests.values()})
+    return {"techniques": out, "index_tests": len(tests), "index_techniques": techniques_in_index,
+            "index_ref": (art_index or {}).get("ref")}
 
 
 def attack_coverage(rules_meta: dict, runs: list[dict], labels: dict, cases: list[dict]) -> dict:
@@ -324,7 +388,7 @@ def in_scope(cases: list[dict], runs: list[dict], since: str | None) -> tuple[li
 
 def compute_metrics(cases: list[dict], runs: list[dict], rules_meta: dict | None = None,
                     baseline: list[dict] | None = None, deployments: list[dict] | None = None,
-                    cost: dict | None = None) -> dict:
+                    cost: dict | None = None, scenarios: dict | None = None, art_index: dict | None = None) -> dict:
     rules_meta = rules_meta or {}
     cls = classify(cases, runs, frozenset(str(m["rule_id"]) for m in rules_meta.values() if m.get("canary")))
     excluded = {"pipeline_only", "sample", "invalid_run"}
@@ -373,6 +437,7 @@ def compute_metrics(cases: list[dict], runs: list[dict], rules_meta: dict | None
         "detection_quality": detection_quality(runs, rules_meta),
         "pipeline_canary": cls["canary"],
         "attack_coverage": attack_coverage(rules_meta, runs, cls["labels"], cases),
+        "variant_coverage": variant_coverage(runs, cases, cls["labels"], scenarios or {}, art_index or {}),
         # same population on both sides: excluded cases (samples, failed runs) have their alerts excluded too
         "alert_duplication_reduction": {
             "alerts": total_alerts, "cases": len(measured_cases),
@@ -391,6 +456,13 @@ def compute_metrics(cases: list[dict], runs: list[dict], rules_meta: dict | None
         "baseline_comparison": baseline_comparison(
             baseline or [], case_to_contained, [manual_steps(c) for c in contained]),
     }
+
+
+def _rate(value: float | None, ci: tuple | list | None) -> str:
+    """0.8 [0.284–0.995]: the observed rate with its exact 95 % interval, so a 1/1 is not read as a certainty."""
+    if value is None:
+        return "n/a"
+    return f"{value} [{ci[0]}–{ci[1]}]" if ci else str(value)
 
 
 def _fmt(s: dict) -> str:
@@ -442,8 +514,7 @@ def render_markdown(m: dict) -> str:
           "| Ngoài dự kiến | Precision | Recall |",
           "|---|---|---|---|---|---|---|---|---|"]
     for rid, b in sorted(m["rule_quality"].items()):
-        prec = "n/a" if b["precision"] is None else b["precision"]
-        rec = "n/a" if b["recall"] is None else b["recall"]
+        prec, rec = _rate(b["precision"], b.get("precision_ci95")), _rate(b["recall"], b.get("recall_ci95"))
         tp = f"{b['tp']} ({b['tp_merged']} gộp vào case đang mở)" if b.get("tp_merged") else b["tp"]
         L.append(f"| {rid} | {tp} | {b['fp']} | {b['human_fp']} | {b['shadow_violation']} | {b['fn']} "
                  f"({b['fn_detection']} / {b['fn_pipeline']} / {b['fn_unverified']}) | {b['unplanned']} "
@@ -453,8 +524,7 @@ def render_markdown(m: dict) -> str:
               f"{dq['unobserved_runs']} lượt chưa quan sát):", "",
           "| Rule | Trạng thái | TP | FP | FN | Ngoài dự kiến | Precision | Recall |", "|---|---|---|---|---|---|---|---|"]
     for rid, b in sorted(dq["rules"].items()):
-        prec = "n/a" if b["precision"] is None else b["precision"]
-        rec = "n/a" if b["recall"] is None else b["recall"]
+        prec, rec = _rate(b["precision"], b.get("precision_ci95")), _rate(b["recall"], b.get("recall_ci95"))
         L.append(f"| {rid} | {b['state'] or '?'} | {b['tp']} | {b['fp']} | {b['fn']} | {b['unplanned']} "
                  f"| {prec} | {rec} |")
     k = m["pipeline_canary"]
@@ -468,7 +538,19 @@ def render_markdown(m: dict) -> str:
           f"- Kỹ thuật đã mô phỏng (Atomic/Stratus/pcap): {', '.join(c['techniques_exercised']) or '-'}",
           f"- Kỹ thuật do thủ tục lab tự khai (không tính coverage): "
           f"{', '.join(c['techniques_declared_by_lab_procedures']) or '-'}",
-          f"- Kỹ thuật phát hiện đúng: {', '.join(c['techniques_detected']) or '-'} (coverage {cov})", "",
+          f"- Kỹ thuật phát hiện đúng: {', '.join(c['techniques_detected']) or '-'} (coverage {cov})", ""]
+    v = m.get("variant_coverage") or {}
+    if v.get("techniques"):
+        L += ["## Độ phủ thủ tục công khai (Atomic Red Team, chỉ mục Linux đã ghim)", "",
+              f"Chỉ mục `{str(v.get('index_ref'))[:8]}`: {v['index_tests']} test, {v['index_techniques']} kỹ thuật. "
+              "Bảng chỉ liệt kê kỹ thuật lab đã chạy; test chạy ở chế độ quan sát (chưa có rule) tính là đã chạy, "
+              "chưa phát hiện.", "", "| Kỹ thuật | Test trong chỉ mục | Test đã chạy | Test được phát hiện |",
+              "|---|---|---|---|"]
+        L += [f"| {t} | {r['in_index']} | {r['run']} | {r['detected']} |" for t, r in v["techniques"].items()]
+        L += [""]
+    L += [
+          "Khoảng tin cậy 95% trong ngoặc vuông là khoảng chính xác Clopper–Pearson của tỉ lệ; khoảng rộng nghĩa là "
+          "còn ít lượt chạy.", "",
           "## Giảm trùng lặp cảnh báo", "",
           f"- {m['alert_duplication_reduction']['alerts']} alert → {m['alert_duplication_reduction']['cases']} case "
           f"(giảm {m['alert_duplication_reduction']['reduction']})", "",
@@ -591,7 +673,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"warning: baseline from CloudTrail unavailable: {measured['error']}", file=sys.stderr)
         baseline = measured.get("rows", [])
     cases, runs = in_scope(cases, runs, args.since)
-    m = compute_metrics(cases, runs, rulesctl.load_metadata(), baseline, deployments, cost)
+    from simulation import catalog
+    from tools import refdata
+    m = compute_metrics(cases, runs, rulesctl.load_metadata(), baseline, deployments, cost,
+                        catalog.load_scenarios(catalog.SCENARIO_DIR), refdata.load_atomic())
     m["scope"]["since"] = args.since
     out = Path(args.out) / datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     out.mkdir(parents=True, exist_ok=True)
