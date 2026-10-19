@@ -161,6 +161,18 @@ def test_a_run_that_never_executed_does_not_steal_the_next_runs_case():
     assert q["tp"] == 1 and q["fn"] == 0
 
 
+def test_the_runner_refuses_to_attack_a_host_a_case_still_contains(monkeypatch):
+    from siemsoar import response
+    r = object.__new__(runner.Runner)
+    r.instance = lambda role: "i-06c071a9fc8745d6c"
+    tags = {"siemsoar:role": "suricata-sensor", response.CASE_TAG: "C-20261019T043905-0eb8db"}
+    monkeypatch.setattr(response, "describe_instance", lambda iid: {"tags": tags})
+    with pytest.raises(RuntimeError, match="contained by case C-20261019T043905-0eb8db"):
+        r.attack_target("suricata-sensor")
+    del tags[response.CASE_TAG]  # a verified restore removes the tag
+    assert r.attack_target("suricata-sensor") == "i-06c071a9fc8745d6c"
+
+
 def test_a_cloud_target_has_no_siem_layer_to_read():
     r = object.__new__(runner.Runner)
     r.ssm_run = lambda *a, **k: pytest.fail("no Wazuh query for an IAM key target")
@@ -495,6 +507,7 @@ def _runner_with_fake_ssm(monkeypatch, fail_verify=False):
     calls = []
     r = object.__new__(runner.Runner)
     monkeypatch.setattr(r, "instance", lambda role: "i-sensor", raising=False)
+    monkeypatch.setattr(r, "attack_target", lambda role: "i-sensor", raising=False)  # not contained
 
     def fake(instance_id, commands, timeout=120):
         calls.append(commands[0])

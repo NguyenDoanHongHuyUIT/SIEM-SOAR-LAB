@@ -5,7 +5,7 @@
 * Telemetry host là loại nhẹ (HIDS/XDR-style), không thay EDR thương mại. Suricata là IDS; chế độ `enforce` chỉ minh họa.
 * Độ trễ phân phối log/finding phụ thuộc dịch vụ AWS (GuardDuty và CloudTrail trễ từ vài phút đến hơn chục phút; cần đo thực tế, xem chỉ số detection latency).
 * Security Group là **stateful**: đổi SG không cắt ngay kết nối đã tồn tại. Cách ly vẫn chặn kết nối mới; muốn cắt tức thì cần stop instance (khi `risk ≥ stop_risk_threshold`) hoặc NACL.
-* Máy bị cách ly (SG `siemsoar-isolation`, do Terraform tạo) chỉ còn **một đường ra**: Wazuh agent → manager TCP 1514, để SIEM vẫn quan sát được máy trong lúc cách ly. Không có đường vào, không SSM, không internet: lệnh dọn dẹp qua SSM chỉ chạy được sau khi restore.
+* Máy bị cách ly (SG `siemsoar-isolation`, do Terraform tạo) chỉ còn **một đường ra**: Wazuh agent → manager TCP 1514, để SIEM vẫn quan sát được máy trong lúc cách ly. Không có rule cho đường vào hay internet, **nhưng kết nối đã mở vẫn còn**: trên lab (19/10/2026), một lệnh SSM Run Command vẫn chạy trên máy 80 giây sau khi máy bị cách ly (kênh của SSM agent mở từ trước, SG stateful). Kẻ tấn công có kết nối sẵn cũng vậy. Muốn cắt ngay phải stop instance (risk ≥ `stop_risk_threshold`) hoặc dùng NACL. Runner từ chối chạy kịch bản trên máy còn tag `siemsoar:isolated-case`.
 * Khi mặt phẳng on-demand tắt: telemetry host và Suricata có khoảng trống; log AWS trong S3 đọc bù được nhưng không thay giám sát thời gian thực.
 * Chưa có kiểm soát cấp Organization (SCP, delegated admin); tách vùng chỉ bằng role/tag/permission boundary/IaC.
 

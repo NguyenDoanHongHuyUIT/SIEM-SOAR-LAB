@@ -187,6 +187,29 @@ def restore_instance_sgs(instance_id: str, groups: list[str], dry_run: bool = Fa
     return {**out, "changed": True}
 
 
+def restore_ec2_from_state(instance_id: str, pre: dict, dry_run: bool = False, start: bool = False) -> dict:
+    """Undo an EC2 containment from its saved pre-action state: every interface's groups, the instance role's session
+    revocation, and a restart if containment stopped a running instance. One procedure for the workflow's restore, the
+    runner's recovery after robustness tests and `soarctl recover` (a lab recovery once restored the groups but left
+    AWSRevokeOlderSessions on the role)."""
+    per_eni = {n["id"]: n["groups"] for n in pre.get("network_interfaces", [])}
+    out = {"security_groups": restore_instance_sgs(instance_id, pre["security_groups"], dry_run, per_eni)}
+    if pre.get("role_name"):
+        out["sessions"] = restore_role_sessions(pre["role_name"], dry_run)
+    if start and pre.get("state") == "running":
+        out["start"] = set_instance_running(instance_id, True, dry_run)
+    return out
+
+
+def ec2_matches_state(instance_id: str, pre: dict) -> tuple[bool, str]:
+    """(restored?, summary): groups as saved on every interface, no isolation tag, no session revocation left."""
+    cur = describe_instance(instance_id)
+    expected = {n["id"]: n["groups"] for n in pre.get("network_interfaces", [])}
+    groups_ok = (eni_groups(cur) == expected) if expected else cur["security_groups"] == pre["security_groups"]
+    ok = groups_ok and CASE_TAG not in cur["tags"] and not (pre.get("role_name") and has_revoke_policy(pre["role_name"]))
+    return ok, f"security groups {expected or cur['security_groups']} restored (now {eni_groups(cur)})"
+
+
 def snapshot_volumes(instance_id: str, case_id: str, volumes: list[str], dry_run: bool = False) -> list[str]:
     if dry_run:
         return []

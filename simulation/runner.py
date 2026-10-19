@@ -150,6 +150,21 @@ class Runner:
             raise SystemExit(f"no running instance with siemsoar:role={role}; start the lab: soarctl lab up")
         return ids[0]
 
+    def attack_target(self, role: str) -> str:
+        """The instance a scenario acts on, refused while a case holds it contained.
+
+        Lab 2026-10-19: a second host-useradd ran on the sensor 80 s after a case had isolated it (SSM still reached the
+        host). Its alert merged into the open case and, correctly, blocked the analyst's restore three times: the
+        system cannot tell a test from an intruder still active. A contained host is decided on first."""
+        from siemsoar import response
+        iid = self.instance(role)
+        info = response.describe_instance(iid)
+        holder = info["tags"].get(response.CASE_TAG)  # set by the containment step, removed by a verified restore
+        if holder:
+            raise RuntimeError(f"{iid} is contained by case {holder}: decide/restore that case before running "
+                               f"another scenario on it")
+        return iid
+
     def await_detections(self, expect: list[dict], run: dict, poll: int = 30) -> list[dict]:
         """Wait up to the settle window for the expected cases. Stops early only when every expectation wants a case
         and all are there: a `case: false` expectation (shadow rule, benign run) needs the whole window to be proven."""
@@ -205,7 +220,7 @@ class Runner:
         return inv.get("StandardOutputContent", "")
 
     def exec_ssm_shell(self, s: dict, run_id: str) -> dict:
-        iid = self.instance("suricata-sensor" if s.get("target", "sensor") == "sensor" else "wazuh-manager")
+        iid = self.attack_target("suricata-sensor" if s.get("target", "sensor") == "sensor" else "wazuh-manager")
         ctx = self.context(s)
         cmds = [render(c, run_id, ctx) for c in s["commands"]]
         try:
@@ -222,7 +237,7 @@ class Runner:
         happened: a run whose atomic did nothing is an execution error, never a false negative), then `cleanup`.
         A missing prerequisite makes run_atomic exit 3, which fails the SSM command: also an execution error.
         """
-        iid = self.instance("suricata-sensor")
+        iid = self.attack_target("suricata-sensor")
         art = s["atomic"]
         ctx = self.context(s)
         timeout = int(art.get("timeout", 120))
@@ -299,7 +314,7 @@ class Runner:
         return names
 
     def exec_pcap_replay(self, s: dict, run_id: str) -> dict:
-        iid = self.instance("suricata-sensor")
+        iid = self.attack_target("suricata-sensor")
         self.upload_pcaps()
         name = s["pcap"]
         out = self.ssm_run(iid, [
@@ -395,7 +410,7 @@ class Runner:
     def check_mid_failure(self, s: dict, run_id: str) -> list[dict]:
         from siemsoar import evidence, response
         from siemsoar.decisions import apply_decision
-        iid = self.instance("suricata-sensor")
+        iid = self.attack_target("suricata-sensor")
         original = response.eni_groups(response.describe_instance(iid))
         self._set_fault("contain", s["fault"])
         try:
@@ -410,9 +425,10 @@ class Runner:
                        [a["action"] for a in self.store.list_audit(case_id)], "detail": ""}]
         finally:
             self._set_fault("contain", "")
-        pre, _ = evidence.get_json(case_id, "pre_action_state")  # manual recovery a human would do
-        response.restore_instance_sgs(iid, pre["security_groups"],
-                                      groups_by_eni={n["id"]: n["groups"] for n in pre.get("network_interfaces", [])})
+        pre, _ = evidence.get_json(case_id, "pre_action_state")  # the recovery `soarctl recover` performs
+        response.restore_ec2_from_state(iid, pre)
+        restored, summary = response.ec2_matches_state(iid, pre)
+        checks.append({"name": "recovered after the test", "ok": restored, "detail": summary})
         return checks
 
     def check_slack_down(self, s: dict, run_id: str) -> list[dict]:

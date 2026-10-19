@@ -3,6 +3,7 @@
   python -m tools.soarctl list [--status NOTIFIED]
   python -m tools.soarctl show <case_id>
   python -m tools.soarctl decide <case_id> --gate approval --decision approve     # Slack-less fallback channel
+  python -m tools.soarctl recover <case_id> --approver U012 --reason "..."         # FAILED case, host contained
   python -m tools.soarctl feedback > feedback.json                                  # feed `rulesctl tune`
   python -m tools.soarctl lab status|up --hours 4|down
 
@@ -52,6 +53,34 @@ def confirm_human_decision(case_id: str, approver: str, approvers: set[str], tty
     return None
 
 
+def recover(store, case_id: str, actor: str, reason: str, principal: str) -> dict:
+    """Runbook recovery of a FAILED EC2 case whose host was left contained: restore from the hashed pre-action state
+    (the same procedure as the workflow's restore), verify, and audit who decided and why. A key disabled by an IAM case
+    is not re-enabled here: whether to reactivate or rotate it is an IAM decision taken in the console."""
+    from siemsoar import evidence, response
+    from siemsoar.schema import PLAN_EC2
+    case = store.get_case(case_id)
+    if case["status"] != "FAILED":
+        raise ValueError(f"case is {case['status']}: only a FAILED case is recovered by hand (otherwise use decide)")
+    if case.get("response_plan", {}).get("type") != PLAN_EC2:
+        raise ValueError("not an EC2 containment: review the IAM key in the console")
+    iid = case["response_plan"]["params"]["instance_id"]
+    holder = response.describe_instance(iid)["tags"].get(response.CASE_TAG)
+    if holder != case_id:
+        raise ValueError(f"{iid} is not held by this case (isolation tag: {holder})")
+    pre, digest = evidence.get_json(case_id, "pre_action_state")
+    if digest != (case.get("pre_action_state_ref") or {}).get("sha256"):
+        raise ValueError("pre_action_state does not match the hash recorded when it was saved: do not restore from it")
+    out = response.restore_ec2_from_state(iid, pre)
+    restored, summary = response.ec2_matches_state(iid, pre)
+    detail = {"reason": reason, "aws_principal": principal, "evidence_sha256": digest, "restored": out,
+              "verified": restored, "summary": summary}
+    store.audit(case_id, "manual_recovery", actor, detail)
+    from siemsoar.util import iso
+    store.update_case(case_id, manual_recovery_at=iso())
+    return detail
+
+
 def feedback_stats(store) -> dict:
     """Per rule: closed cases and how many were false positives (dismissed by a human or restored as FP)."""
     stats: dict[str, dict[str, int]] = defaultdict(lambda: {"cases": 0, "false_positive": 0})
@@ -78,6 +107,10 @@ def main(argv: list[str] | None = None) -> int:
     dc.add_argument("--gate", choices=["approval", "restore"], required=True)
     dc.add_argument("--decision", required=True)
     dc.add_argument("--approver", required=True, help="your Slack member id (must be in /<prefix>/slack/approver_ids)")
+    rc = sub.add_parser("recover")
+    rc.add_argument("case_id")
+    rc.add_argument("--approver", required=True, help="your Slack member id (must be in /<prefix>/slack/approver_ids)")
+    rc.add_argument("--reason", required=True, help="why the containment can be lifted (kept in the audit)")
     sub.add_parser("feedback")
     lab = sub.add_parser("lab")
     lab.add_argument("action", choices=["status", "up", "extend", "down"])
@@ -126,6 +159,22 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print(json.dumps(out))
         return 0
+    if args.cmd == "recover":
+        tty = sys.stdin.isatty()
+        typed = input(f"lift the containment of {args.case_id} as {args.approver}. Type the case id to confirm: ") \
+            if tty else None
+        refusal = confirm_human_decision(args.case_id, args.approver, _approvers(args.prefix), tty, typed)
+        if refusal:
+            print(f"rejected: {refusal}", file=sys.stderr)
+            return 1
+        os.environ.setdefault("EVIDENCE_BUCKET", f"{args.prefix}-evidence-{_principal().split(':')[4]}")
+        try:
+            out = recover(store, args.case_id, f"cli:{args.approver}", args.reason, _principal())
+        except (ValueError, CaseNotFound) as err:
+            print(f"rejected: {err}", file=sys.stderr)
+            return 1
+        print(json.dumps(out, indent=2, default=str))
+        return 0 if out["verified"] else 1
     if args.cmd == "feedback":
         print(json.dumps(feedback_stats(store), indent=2))
         return 0
