@@ -157,7 +157,8 @@ def test_build_injects_lifecycle_groups_and_manifest(tmp_path):
     mapping = rules[110101].element
     assert mapping.findtext("if_sid") == "86601" and mapping.findtext("field") == "^2009582$"
     assert rules[110103].element.find("mitre") is None  # no technique claimed -> no empty <mitre/>
-    assert manifest["summary"] == {"shadow": 11, "active": 0, "enforce": 0, "deprecated": 0}
+    states = [m["state"] for m in rulesctl.load_metadata().values()]
+    assert manifest["summary"] == {s: states.count(s) for s in rulesctl.STATES} and sum(manifest["summary"].values()) == 11
     assert manifest["commit_time"].startswith("2026") and manifest["et_open_version"]
     suri = (tmp_path / "deadbee" / "suricata" / "siemsoar.rules").read_text()
     assert 'msg:"ET SCAN NMAP -sS window 1024"' in suri and not any(
@@ -214,17 +215,18 @@ def test_enforce_becomes_drop_only_when_allowed(scratch, tmp_path, monkeypatch):
 # ------------------------------------------------------------------ promote / lifecycle / coverage / tune
 def test_promote_changes_only_state_line_and_keeps_scenarios_consistent(scratch, monkeypatch, scenario_copy):
     monkeypatch.setattr(rulesctl, "RULES", scratch)
-    path = scratch / "metadata" / "wazuh-100110.yml"
+    path = scratch / "metadata" / "wazuh-100100.yml"
+    assert "state: shadow" in path.read_text()
     before = path.read_text()
-    msg = rulesctl.promote("wazuh-100110", "active")
+    msg = rulesctl.promote("wazuh-100100", "active")
     after = path.read_text()
-    assert msg.startswith("wazuh-100110: shadow -> active (scenario expectations updated: ")
+    assert msg.startswith("wazuh-100100: shadow -> active (scenario expectations updated: ")
     diff = [(a, b) for a, b in zip(before.splitlines(), after.splitlines(), strict=True) if a != b]
     assert diff == [("state: shadow", "state: active")]
     useradd = (scenario_copy / "host-useradd.yml").read_text()
-    assert 'rule_id: "100110", case: true}' in useradd and 'rule_id: "100100", case: false}' in useradd
+    assert 'rule_id: "100100", case: true}' in useradd and 'rule_id: "100102", case: false}' in useradd
     assert rulesctl.lint(scratch) == []  # promotion leaves rules and scenarios consistent: no hand edits needed
-    assert (ROOT / "simulation/scenarios/host-useradd.yml").read_text().count('"100110", case: false') == 1
+    assert (ROOT / "simulation/scenarios/host-useradd.yml").read_text().count('"100100", case: false') == 1
 
 
 def test_promote_rejects_illegal_jump(scratch, monkeypatch):
@@ -262,10 +264,19 @@ def test_lifecycle_gate_against_git_base(tmp_path):
 
 def test_coverage_counts_only_active_and_enforce(scratch, monkeypatch):
     monkeypatch.setattr(rulesctl, "RULES", scratch)
-    assert rulesctl.coverage()["techniques"] == {}  # first import: everything is in shadow
-    rulesctl.promote("wazuh-100110", "active")
-    cov = rulesctl.coverage()
-    assert cov["techniques"] == {"T1136.001": ["wazuh-100110"]}  # 100120/100121 etc. are still shadow
+
+    def expected():
+        out: dict[str, list[str]] = {}
+        for key, m in rulesctl.load_metadata().items():
+            if m["state"] in ("active", "enforce"):
+                for t in m["mitre"]:
+                    out.setdefault(t, []).append(key)
+        return out
+
+    assert rulesctl.coverage()["techniques"] == expected()
+    assert "T1110" not in rulesctl.coverage()["techniques"]  # 100120/100121 are shadow
+    rulesctl.promote("wazuh-100121", "active")
+    assert rulesctl.coverage()["techniques"]["T1110"] == ["wazuh-100121"]
 
 
 def test_tune_suggestions(scratch, monkeypatch):
