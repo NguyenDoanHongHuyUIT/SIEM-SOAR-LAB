@@ -81,16 +81,37 @@ def lab_instances(run_events: list[dict]) -> dict[str, str]:
     return out
 
 
+def _type_changes(modify_events: list[dict], lab: set[str]) -> dict[str, list[tuple[datetime, str]]]:
+    """{instance id: [(time, new type)]} from ModifyInstanceAttribute calls that changed instanceType (what Terraform
+    does to resize a stopped instance in place; no RunInstances is recorded for it)."""
+    out: dict[str, list[tuple[datetime, str]]] = {}
+    for rec in modify_events:
+        iid = _dig(rec, "requestParameters", "instanceId")
+        new = _dig(rec, "requestParameters", "instanceType", "value")
+        if iid in lab and new and (t := _time(rec.get("eventTime"))):
+            out.setdefault(iid, []).append((t, new))
+    return {k: sorted(v) for k, v in out.items()}
+
+
 def build_sessions(run_events: list[dict], start_events: list[dict], stop_events: list[dict],
-                   now: datetime | None = None) -> list[dict]:
+                   now: datetime | None = None, modify_events: list[dict] | None = None) -> list[dict]:
     """Lab sessions: from the first instance start to the last instance stop that follows it.
 
     The creation (RunInstances) counts as the first start. Overlapping instance runs are merged, because the manager and
     the sensor start and stop together and only wall-clock time is billable once. `types` lists every lab instance type.
     A session still running at `now` is reported up to `now` with `open: true` (it used to be dropped: the first real
-    report showed 0 lab hours while the lab was up).
+    report showed 0 lab hours while the lab was up). `types` has one entry per instance that ran in the session, with
+    the type it had then (resizes from ModifyInstanceAttribute applied), so two instances of one type count twice.
     """
     types = lab_instances(run_events)
+    changes = _type_changes(modify_events or [], set(types))
+
+    def type_at(iid: str, when: datetime) -> str:
+        current = types[iid]
+        for t, new in changes.get(iid, []):
+            if t <= when:
+                current = new
+        return current
     points: list[tuple[datetime, str, str]] = []
     for rec in run_events:
         for iid in _instance_ids({"responseElements": rec.get("responseElements")}):
@@ -101,28 +122,31 @@ def build_sessions(run_events: list[dict], start_events: list[dict], stop_events
         points += [(t, kind, iid) for iid in _instance_ids(rec) if iid in types and t]
     points.sort()
     running: set[str] = set()
+    seen: dict[str, str] = {}  # instances started in the current session -> type at their start
     sessions: list[dict] = []
     opened: datetime | None = None
     for when, kind, iid in points:
         if kind == "up":
             if not running:
-                opened = when
+                opened, seen = when, {}
             running.add(iid)
+            seen.setdefault(iid, type_at(iid, when))
         else:
             running.discard(iid)
             if not running and opened is not None:
                 sessions.append({"start": opened, "end": when, "hours": round((when - opened).total_seconds() / 3600, 3),
-                                 "types": sorted(set(types.values())), "open": False})
+                                 "types": sorted(seen.values()), "open": False})
                 opened = None
     if opened is not None and now is not None and now > opened:
         sessions.append({"start": opened, "end": now, "hours": round((now - opened).total_seconds() / 3600, 3),
-                         "types": sorted(set(types.values())), "open": True})
+                         "types": sorted(seen.values()), "open": True})
     return sessions
 
 
 def sessions_from_cloudtrail(ct, start: datetime, end: datetime) -> list[dict]:
     return build_sessions(lookup(ct, "RunInstances", start, end), lookup(ct, "StartInstances", start, end),
-                          lookup(ct, "StopInstances", start, end), now=end)
+                          lookup(ct, "StopInstances", start, end), now=end,
+                          modify_events=lookup(ct, "ModifyInstanceAttribute", start, end))
 
 
 # --------------------------------------------------------------------------- cost

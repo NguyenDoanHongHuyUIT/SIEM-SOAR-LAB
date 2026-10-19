@@ -51,6 +51,21 @@ def test_sessions_are_wall_clock_from_first_start_to_last_stop_of_the_lab_instan
     assert sessions[0]["types"] == ["t3.large", "t3.small"]  # the untagged m5.large is not part of the lab
 
 
+def test_a_resized_instance_is_priced_with_the_type_it_had_in_each_session():
+    """Terraform resizes a stopped instance in place (ModifyInstanceAttribute, no new RunInstances): sessions after the
+    resize use the new type; two instances of one type count twice."""
+    runs = [run_event(t(9), [("i-mgr", "t3.large")]), run_event(t(9), [("i-sen", "t3.large")])]
+    resize = {"eventTime": iso(t(12)), "eventName": "ModifyInstanceAttribute",
+              "requestParameters": {"instanceId": "i-mgr", "instanceType": {"value": "t3a.xlarge"}}}
+    starts = [power_event(t(14), "StartInstances", "i-mgr", "i-sen")]
+    stops = [power_event(t(11), "StopInstances", "i-mgr", "i-sen"), power_event(t(16), "StopInstances", "i-mgr", "i-sen")]
+    before, after = src.build_sessions(runs, starts, stops, modify_events=[resize])
+    assert before["types"] == ["t3.large", "t3.large"] and after["types"] == ["t3.large", "t3a.xlarge"]
+    est = src.estimate_session_cost([before, after], {"t3.large": 0.0832, "t3a.xlarge": 0.1504})
+    assert est["sessions"][0]["usd_compute_estimate"] == round(2 * 2 * 0.0832, 3)
+    assert est["sessions"][1]["usd_compute_estimate"] == round(2 * (0.0832 + 0.1504), 3)
+
+
 def test_a_session_still_running_is_not_reported_as_finished():
     assert src.build_sessions([run_event(t(9), [("i-a", "t3.large")])], [], []) == []
 
@@ -76,7 +91,8 @@ def test_sessions_from_cloudtrail_unwraps_the_json_records():
     ct = FakeCloudTrail({"RunInstances": [run_event(t(9), [("i-a", "t3.large")])],
                          "StopInstances": [power_event(t(10), "StopInstances", "i-a")]})
     sessions = src.sessions_from_cloudtrail(ct, t(0), t(23))
-    assert sessions[0]["hours"] == 1.0 and set(ct.calls) == {"RunInstances", "StartInstances", "StopInstances"}
+    assert sessions[0]["hours"] == 1.0
+    assert set(ct.calls) == {"RunInstances", "StartInstances", "StopInstances", "ModifyInstanceAttribute"}
 
 
 # ------------------------------------------------------------------ cost
