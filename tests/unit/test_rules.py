@@ -302,6 +302,22 @@ def test_fim_watches_directories_not_files():
                 assert not re.search(r"/(passwd|shadow|sudoers|sshd_config|authorized_keys)$", path.strip()), path
 
 
+def test_audit_rules_follow_the_wazuh_documented_forms():
+    """Only the rule shapes and keys of the Wazuh system-calls-monitoring documentation: execve by euid 0 (rule 80792)
+    and file watches with the audit-wazuh-{r,w,a,x} keys of the manager's audit-keys CDB list."""
+    import re
+    lines = [ln.strip() for ln in (ROOT / "agent/siemsoar.rules").read_text().splitlines() if ln.strip() and not ln.startswith("#")]
+    keys = {"audit-wazuh-c", "audit-wazuh-r", "audit-wazuh-w", "audit-wazuh-a", "audit-wazuh-x"}
+    for ln in lines:
+        assert (re.fullmatch(r"-a always,exit -F euid=0 -F arch=b(64|32) -S execve -k audit-wazuh-c", ln)
+                or re.fullmatch(r"-w /\S+ -p [rwax] -k (audit-wazuh-[rwax])", ln)), ln
+        assert ln.split("-k ")[1] in keys
+    assert {"-a always,exit -F euid=0 -F arch=b64 -S execve -k audit-wazuh-c",
+            "-a always,exit -F euid=0 -F arch=b32 -S execve -k audit-wazuh-c"} <= set(lines)
+    xml = (ROOT / "agent/ossec_agent_additions.xml").read_text()
+    assert "<log_format>audit</log_format>" in xml and "<location>/var/log/audit/audit.log</location>" in xml
+
+
 # ------------------------------------------------------------------ rule files
 def test_duplicate_ids_rejected():
     with pytest.raises(ValueError):

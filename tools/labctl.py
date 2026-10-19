@@ -4,6 +4,7 @@
   python -m tools.labctl extend --hours 2  # re-arm the timer from now
   python -m tools.labctl down              # stop instances and cancel the timer
   python -m tools.labctl ensure-timer      # after a Terraform apply: no running lab instance without a timer
+  python -m tools.labctl refresh-agents    # re-apply agent/ (Wazuh agent config, auditd) on running lab hosts
   python -m tools.labctl status
 
 Replaces the former `lab_session` Lambda. The auto-stop itself is now native: a one-time EventBridge Scheduler
@@ -119,6 +120,23 @@ def ensure_timer(prefix: str, guard_hours: float = GUARD_HOURS) -> dict:
     return {"auto_stop_at": None, "instances": insts}
 
 
+AGENT_REFRESH = ["set -eu", "set -a; . /opt/siemsoar/env; set +a",
+                 'aws s3 sync "s3://${BOOT_BUCKET}/bootstrap/" /opt/siemsoar/bootstrap/ --region "${REGION}" --delete',
+                 "bash /opt/siemsoar/bootstrap/agent/install_wazuh_agent.sh"]
+
+
+def refresh_agents(prefix: str) -> dict:
+    """Bootstrap runs once at first boot; a changed agent/ directory reaches running hosts through this: the same
+    install script (idempotent: pinned agent, SIEMSOAR blocks replaced) on every running lab host except the manager."""
+    hosts = [i["id"] for i in instances() if i["state"] == "running" and i["role"] != "wazuh-manager"]
+    if not hosts:
+        raise SystemExit("no running lab host (start the lab first)")
+    cmd = aws.client("ssm").send_command(InstanceIds=hosts, DocumentName="AWS-RunShellScript",
+                                          Parameters={"commands": AGENT_REFRESH, "executionTimeout": ["1800"]},
+                                          Comment=f"{prefix}: refresh Wazuh agent config")["Command"]["CommandId"]
+    return {"command_id": cmd, "hosts": hosts}
+
+
 def status(prefix: str) -> dict:
     try:
         timer = aws.client("scheduler").get_schedule(Name=schedule_name(prefix))["ScheduleExpression"]
@@ -130,12 +148,13 @@ def status(prefix: str) -> dict:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="tools.labctl")
     ap.add_argument("--prefix", default=os.environ.get("NAME_PREFIX", "siemsoar"))
-    ap.add_argument("action", choices=["up", "extend", "down", "status", "ensure-timer"])
+    ap.add_argument("action", choices=["up", "extend", "down", "status", "ensure-timer", "refresh-agents"])
     ap.add_argument("--hours", type=float, default=4)
     args = ap.parse_args(argv)
     fn = {"up": lambda: up(args.prefix, args.hours), "extend": lambda: extend(args.prefix, args.hours),
           "down": lambda: down(args.prefix), "status": lambda: status(args.prefix),
-          "ensure-timer": lambda: ensure_timer(args.prefix)}[args.action]
+          "ensure-timer": lambda: ensure_timer(args.prefix),
+          "refresh-agents": lambda: refresh_agents(args.prefix)}[args.action]
     print(json.dumps(fn(), indent=2))
     return 0
 

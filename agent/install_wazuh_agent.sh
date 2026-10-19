@@ -28,9 +28,21 @@ apt-get update -y
 WAZUH_MANAGER="$MANAGER_IP" WAZUH_AGENT_NAME="$INSTANCE_ID" apt-get install -y "wazuh-agent=${WAZUH_VERSION}.*"
 apt-mark hold wazuh-agent
 
+# Linux audit (system calls): every root command and reads of the credential stores, whatever tool is used
+apt-get install -y auditd
+install -m 0640 "$BOOT/agent/siemsoar.rules" /etc/audit/rules.d/siemsoar.rules
+augenrules --load
+systemctl enable --now auditd
+
+# The sensor also ships its Suricata EVE input; detected so that a refresh needs no host-specific argument
+EXTRA=("$@")
+if [ ${#EXTRA[@]} -eq 0 ] && [ -f /etc/suricata/suricata.yaml ]; then
+  EXTRA=("$BOOT/suricata/ossec_eve_localfile.xml")
+fi
+
 # Replace (not skip) the SIEMSOAR blocks, so re-running applies a changed agent configuration
 sed -i '/<!-- BEGIN SIEMSOAR/,/<!-- END SIEMSOAR -->/d' /var/ossec/etc/ossec.conf
-cat "$BOOT/agent/ossec_agent_additions.xml" "$@" >> /var/ossec/etc/ossec.conf
+cat "$BOOT/agent/ossec_agent_additions.xml" "${EXTRA[@]}" >> /var/ossec/etc/ossec.conf
 mkdir -p /srv/lab && touch /srv/lab/canary.txt   # FIM canary used by the simulation scenarios
 systemctl daemon-reload
 systemctl enable --now wazuh-agent

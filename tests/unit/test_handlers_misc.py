@@ -169,6 +169,15 @@ def test_ensure_timer_covers_instances_created_after_the_session_started(lab_env
     assert labctl.ensure_timer("siemsoar")["auto_stop_at"] is None
 
 
+def test_refresh_agents_targets_running_lab_hosts_but_never_the_manager(lab_env):
+    from tools import labctl
+    ec2, ids, other = lab_env
+    out = labctl.refresh_agents("siemsoar")
+    roles = {i["id"]: i["role"] for i in labctl.instances()}
+    assert out["hosts"] and all(roles[h] != "wazuh-manager" for h in out["hosts"]) and other not in out["hosts"]
+    assert labctl.AGENT_REFRESH[-1].endswith("agent/install_wazuh_agent.sh")
+
+
 def test_labctl_caps_hours_at_twelve(lab_env):
     from tools import labctl
     out = labctl.up("siemsoar", hours=500)

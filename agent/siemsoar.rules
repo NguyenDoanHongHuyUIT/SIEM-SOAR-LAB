@@ -1,0 +1,14 @@
+## SIEMSOAR audit rules (installed to /etc/audit/rules.d/ by agent/install_wazuh_agent.sh, loaded with augenrules).
+## Syntax and keys from the Wazuh documentation (system calls monitoring, use cases):
+##   https://documentation.wazuh.com/current/user-manual/capabilities/system-calls-monitoring/use-cases/monitoring-commands-run-as-root.html
+##   https://documentation.wazuh.com/current/user-manual/capabilities/system-calls-monitoring/use-cases/monitoring-file-and-directory-access.html
+## The keys are the ones of the manager's CDB list etc/lists/audit-keys (audit-wazuh-c = command, -r = read, -w = write,
+## -a = attribute); the official rules 80780-80792 (0365-auditd_rules.xml) turn the events into alerts.
+
+## every command executed with root privileges (rule 80792 "Audit: Command"), whatever tool or path launched it
+-a always,exit -F euid=0 -F arch=b64 -S execve -k audit-wazuh-c
+-a always,exit -F euid=0 -F arch=b32 -S execve -k audit-wazuh-c
+
+## credential stores: read access (T1003.008 reads them; FIM only sees changes)
+-w /etc/shadow -p r -k audit-wazuh-r
+-w /etc/gshadow -p r -k audit-wazuh-r

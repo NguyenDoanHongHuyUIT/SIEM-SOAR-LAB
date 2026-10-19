@@ -37,5 +37,5 @@ systemctl enable suricata
 systemctl restart suricata
 
 # ---- Wazuh agent (shared with the targets), plus the sensor's Suricata EVE input
-bash "$BOOT/agent/install_wazuh_agent.sh" "$BOOT/suricata/ossec_eve_localfile.xml"
+bash "$BOOT/agent/install_wazuh_agent.sh"   # detects /etc/suricata/suricata.yaml and adds the EVE input
 log "done"
