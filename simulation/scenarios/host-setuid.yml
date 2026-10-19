@@ -1,0 +1,15 @@
+id: host-setuid
+title: Privilege escalation - set the SetUID flag on a file (Atomic Red Team T1548.001 test 3)
+kind: atomic
+target: sensor
+malicious: true
+atomic:
+  technique: T1548.001
+  test_guid: 759055b3-3885-4582-a8ec-c00c9d64dd79
+  ref: 388942adbd9641f4dfdcf079d7efe9a75ec0ac43
+  timeout: 120
+verify:
+  - 'test -u /tmp/evilBinary'
+expect: []   # observation: no SIEMSOAR rule yet. The audit/FIM events of these runs are the basis of the
+             # rules written next (shadow first); until then the technique counts as exercised, not detected.
+settle_seconds: 120
