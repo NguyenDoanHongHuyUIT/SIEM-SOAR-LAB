@@ -38,7 +38,7 @@ jobs:
     environment: lab
     steps:
       - uses: actions/checkout@v4
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.APPLY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
