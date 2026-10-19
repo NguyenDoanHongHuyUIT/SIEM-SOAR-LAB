@@ -111,6 +111,8 @@ Các giá trị dưới đây không có nguồn công bố. Chúng là lựa ch
 | `breaker_limit` / `breaker_window_seconds` | 3 / 3600 | Quá 3 lần cách ly mỗi giờ thì nghi rule nhiễu: tự động dừng, chờ người | Test `circuit_breaker` |
 | `stop_risk_threshold` | 85 | Chỉ stop máy khi rủi ro rất cao; SG stateful không cắt kết nối cũ (xem limitations) | Case lab: risk 65 → không stop |
 | `[risk]`, `[severity]` trong `policy.toml` | `basis = "analyst"` | Xếp thứ tự xử lý, không quyết định có hành động hay không | FP/TP đo được, `rulesctl tune` |
+| Máy manager `t3a.xlarge`, đĩa 50 GB | 4 vCPU, 16 GiB | Đạt khuyến nghị Wazuh all-in-one cho 1–25 agent (4 vCPU, 8 GiB, 50 GB; [quickstart](https://documentation.wazuh.com/current/quickstart.html)). `t3.large` (2 vCPU) thấp hơn khuyến nghị, dù lab đo không quá tải | CloudWatch CPU/credit, `free`, PSI, `events_dropped` của analysisd |
+| Máy sensor `t3.small` | 2 vCPU, 2 GiB | Đo trên lab: Suricata dùng khoảng 560 MB, còn khoảng 1 GB trống, không mất gói (`capture.kernel_drops`), không OOM. Không có khuyến nghị cấu hình chính thức để đối chiếu | như trên |
 | `settle_seconds` của kịch bản | 90–300 s (host/mạng), 1800 s (Stratus) | Thời gian runner chờ trước khi kết luận | `window_headroom` trong báo cáo (lab: phát hiện host muộn nhất < 1 s sau khi chạy xong) |
 
 ## 6. Nguyên tắc thiết kế → hiện thực
