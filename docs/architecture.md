@@ -6,9 +6,20 @@
 |---|---|---|
 | Thành phần | CloudTrail→S3, GuardDuty, EventBridge(+DLQ), Lambda, Step Functions, DynamoDB, S3 evidence, SNS, API Gateway | VPC lab, Wazuh Manager+Indexer+Dashboard, EC2 sensor (Wazuh Agent + Suricata), `target_count` máy mục tiêu (mặc định 2; Wazuh Agent, **IAM role riêng từng máy**, SSH chỉ mở từ sensor) |
 | Kịch bản xuyên máy | | Test Atomic công khai chạy từ sensor nhắm vào máy mục tiêu (`xhost-*`: T1046, T1110.004); `observe_on` chỉ máy mà phát hiện được kỳ vọng. Atomic Red Team (commit đã ghim) **không có** test Linux thuộc tactic lateral-movement (tra từ ATT&CK v20 + chỉ mục ART), nên không có kịch bản lan truyền ngang tự viết |
-| Chi phí | Trả theo dùng (~vài USD/tháng khi nhàn rỗi; GuardDuty tính theo khối lượng) | Chỉ tính khi bật; `tools.labctl` bật lab và đặt timer tự tắt: EventBridge Scheduler gọi thẳng `ec2:StopInstances` (không Lambda) |
+| Chi phí | Trả theo dùng (~vài USD/tháng khi nhàn rỗi; GuardDuty tính theo khối lượng) | Chỉ tính khi bật; `tools.labctl` bật lab và đặt timer tự tắt: EventBridge Scheduler gọi thẳng `ec2:StopInstances` (không Lambda). Timer giữ danh sách máy lúc hẹn, nên sau mỗi apply workflow chạy `labctl ensure-timer` (hẹn lại đúng giờ cũ với mọi máy lab; có máy chạy mà không có timer thì hẹn 1 giờ) |
 | Khi tắt | Cloud path (GuardDuty) vẫn tạo case | Telemetry host/Suricata có khoảng trống; CloudTrail trong S3 được Wazuh đọc bù khi bật lại |
 | Terraform | `infra/modules/serverless-core` | `infra/modules/lab-ondemand` (`count = lab_enabled ? 1 : 0`) |
+
+### Telemetry trên máy lab
+| Nguồn | Máy | Cấu hình | Alert |
+|---|---|---|---|
+| syslog / auth.log | mọi máy | mặc định của Wazuh Agent (không khai lại để tránh đọc trùng) | rule chính thức (5902, 5710/5712, 5763, …) → rule SIEMSOAR bọc |
+| FIM (real-time, theo thư mục + `restrict`) | mọi máy | `agent/ossec_agent_additions.xml`: `/etc/passwd`, `shadow`, `sudoers`, `sshd_config`, `authorized_keys`, cron, systemd, profile/bashrc, thư mục canary | 550/554 → rule SIEMSOAR |
+| auditd | mọi máy | `agent/siemsoar.rules`: `execve` theo euid 0 (b64/b32), đọc `/etc/shadow`, `/etc/gshadow`; key theo danh sách `audit-keys` của Wazuh | rule chính thức 80780–80792 (80792 "Audit: Command") |
+| Suricata EVE | sensor | `suricata/ossec_eve_localfile.xml` | 86601 → rule ánh xạ SIEMSOAR (110101–110103) |
+
+Cấu hình agent đổi trong repo đến máy đang chạy bằng `labctl refresh-agents` (cùng script cài đặt, idempotent; không
+chạm manager). Bootstrap chỉ chạy lúc khởi động lần đầu.
 
 ## 2. Luồng dữ liệu
 
@@ -37,7 +48,7 @@ sequenceDiagram
   H->>W: SendTaskSuccess
   W->>R: Preflight (scope, tag, DryRun IAM, circuit breaker)
   W->>R: Lưu pre-action state (S3, ghi một lần, sha256)
-  W->>R: Snapshot → SG cô lập (0 ingress/0 egress) → revoke session → (stop nếu rủi ro cao)
+  W->>R: Snapshot → SG cô lập (không ingress; egress chỉ 1514 tới Wazuh manager) → revoke session → (stop nếu rủi ro cao)
   W->>R: Verify bằng API → ISOLATED
   W->>H: Cổng 2: Restore (TP: đã khắc phục / FP)
   W->>R: Validate (không alert mới, không drift) → Restore → Verify → RESTORED
@@ -92,6 +103,8 @@ GSI: `resource-index (resource_id, created_at)`, `status-index (status, created_
 * **Không có cổng vào**: VPC lab không có inbound; quản trị bằng SSM Session Manager; dashboard qua port-forward.
 * **OIDC, không khóa dài hạn**: role `plan` (ReadOnly, chỉ `pull_request`), `apply` (chỉ job gắn Environment `lab`, cần reviewer duyệt), `rules` (chỉ upload S3 + SSM SendCommand tới instance gắn tag `ondemand`).
 * **SOAR không thể vượt phạm vi**: IAM của Lambda giới hạn thao tác ghi EC2 trên instance có tag `siemsoar:zone=workload`, IAM user có tiền tố `lab-`, role `siemsoar-lab-*`; Wazuh manager gắn `siemsoar:protected=true`. Phạm vi được xét hai lần: **enrich** (trước khi hỏi người duyệt) hạ kế hoạch ngoài phạm vi xuống *chỉ thông báo* (thẻ Acknowledge/Dismiss, không đề xuất hành động mà preflight sẽ từ chối, không đọc IAM user ngoài tiền tố); **preflight** (sau khi duyệt) kiểm lại vì tag có thể đổi trong lúc chờ.
+* **Nhiều máy, phạm vi riêng**: mỗi máy mục tiêu có IAM role `siemsoar-lab-target-N` riêng; thu hồi phiên khi cô lập chỉ chạm role của máy đó (đã kiểm trên lab bằng CloudTrail). Máy mục tiêu chỉ mở SSH từ sensor cho các test xuyên máy.
+* **GuardDuty**: thời điểm sự kiện là `service.eventLastSeen` (hoạt động đã kích hoạt lần gửi này; finding lặp lại không bị đo từ lần đầu). Key `ASIA…` là credential tạm của STS ([IAM unique-id prefixes](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_identifiers.html#identifiers-unique-ids)): gộp theo danh tính, không bao giờ đề xuất `iam_key_disable` (không vô hiệu được bằng `UpdateAccessKey`).
 * **Slack**: HMAC (cửa sổ 5 phút), allow-list người duyệt trong SSM, token ở server, nút chỉ mang `case_id|gate|decision`.
 * **Secret**: SSM SecureString (đặt ngoài Terraform), key xoay vòng ghi vào Secrets Manager, không bao giờ vào state/log/DynamoDB (có test).
 * **Evidence**: S3 Versioning + Object Lock (GOVERNANCE) + SSE + TLS-only; ghi một lần, hash trong case, kiểm lại hash trước restore.

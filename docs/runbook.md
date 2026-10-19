@@ -47,7 +47,10 @@ terraform -chdir=infra/envs/lab output lab                 # có lệnh port-for
 aws ssm get-parameter --name /siemsoar/wazuh/admin_password --with-decryption --query Parameter.Value --output text
 python -m tools.soarctl lab status | extend --hours 2 | down
 ```
-Kết thúc: `lab-session → down` (hủy hẳn) — hoặc timer chỉ *stop* instance nếu bạn quên.
+Kết thúc phiên: `python -m tools.soarctl lab down` (stop máy, hủy timer; dữ liệu Wazuh giữ nguyên) — hoặc timer tự stop.
+`lab-session → down` **hủy hẳn** mặt phẳng lab (manager và dữ liệu Wazuh): chỉ dùng khi kết thúc đồ án.
+Sau khi đổi `agent/` (cấu hình FIM, auditd): merge → `terraform` apply (đưa file lên bucket bootstrap) →
+`python -m tools.labctl refresh-agents` (áp lên sensor và máy mục tiêu đang chạy).
 
 ## 5. Chạy lần đầu an toàn (checklist)
 Mọi rule vào repo ở **shadow** (đề cương 5.3: rule mới chỉ ghi nhận alert, không tạo case). Vì vậy phiên đầu là phiên **đo**:
@@ -70,6 +73,11 @@ GuardDuty cần tới khoảng 18 phút (đo ở phiên 2; AWS không công bố
 `ec2:DescribeAccountAttributes` (policy của `lab-victim` cho phép đúng lệnh đọc này). Bước cleanup xóa trail bằng
 key người vận hành nên GuardDuty cũng báo một finding cùng loại về key đó. Case ấy **chỉ thông báo** (user ngoài
 tiền tố `lab-`), chỉ cần Acknowledge, và không được tính vào lượt chạy.
+
+Kịch bản nhiều máy (`xhost-*`, `target-useradd`): chạy từ sensor nhắm vào `lab-target-1` (`{target_ip}`), `observe_on`
+chỉ máy nhận phát hiện. Runner **từ chối** chạy trên máy còn tag `siemsoar:isolated-case`: quyết định/khôi phục case đó
+trước, nếu không alert mới sẽ chặn restore (đúng thiết kế). Chạy kịch bản từ một bản checkout cố định (ví dụ
+`git worktree add ../run-main origin/main`), không từ thư mục đang sửa code: runner đọc lại thư mục kịch bản mỗi lượt.
 
 Pcap cho test Suricata được bắt lại bằng `python -m tools.capture_pcaps` (cần Docker; chạy thủ tục Atomic trong mạng Docker tạm, ghi `rules/pcaps/provenance.json`). Khi thêm rule ET Open: tạo metadata `source: et-open` + `wazuh_rule_id`, rồi `python -m tools.refdata et-open` để ghim nội dung rule.
 
@@ -97,7 +105,8 @@ Audit ghi cả người duyệt (`cli:<member id>`) lẫn danh tính AWS đã ch
 | Runner báo "contained by case …" | Máy đang bị cô lập: quyết định/khôi phục case đó trước. Không chạy kịch bản trên máy bị cô lập (alert mới sẽ chặn restore, đúng thiết kế) |
 | Circuit breaker mở (`BreakerOpen`) | Có >N lần cách ly/giờ: nghi ngờ rule quá nhiễu. Demote rule về shadow, xử lý thủ công |
 | Alarm DLQ không rỗng | Alert tới EventBridge nhưng ingest lỗi: xem `siemsoar-ingest-dlq`, sửa, replay |
-| Lab quên tắt | Timer sẽ stop; vẫn nên `lab-session → down` |
+| Lab quên tắt | Timer sẽ stop; vẫn nên `soarctl lab down` |
+| Máy lab vẫn chạy sau giờ tắt | Máy được tạo sau khi hẹn timer: `labctl ensure-timer` (workflow `terraform` tự chạy sau mỗi apply) |
 | Restore bị chặn (`restore_blocked`) | Đọc `reasons` trong audit: alert mới sau cách ly, drift SG, hash evidence sai |
 
 ## 9. Kết thúc đồ án (tuần 12)
