@@ -146,6 +146,29 @@ def test_labctl_down_up_and_native_timer(lab_env):
     assert labctl.status("siemsoar")["auto_stop"] is None
 
 
+def test_ensure_timer_covers_instances_created_after_the_session_started(lab_env):
+    """Lab 2026-10-19: the timer armed at `up` stopped the manager and the sensor at 08:39; the two targets Terraform
+    created at 08:01 kept running. After an apply, the timer is re-armed at the same time with every lab instance."""
+    from tools import labctl
+    ec2, ids, _ = lab_env
+    first = labctl.up("siemsoar", hours=2)["auto_stop_at"]
+    new = ec2.run_instances(ImageId="ami-12345678", MinCount=1, MaxCount=1, TagSpecifications=[{
+        "ResourceType": "instance", "Tags": [{"Key": "siemsoar:plane", "Value": "ondemand"},
+                                             {"Key": "siemsoar:role", "Value": "lab-target"}]}])["Instances"][0]["InstanceId"]
+    out = labctl.ensure_timer("siemsoar")
+    sched = boto3.client("scheduler", region_name=R).get_schedule(Name="siemsoar-lab-autostop")
+    assert out["auto_stop_at"] == first  # same end of session, not extended
+    assert sorted(json.loads(sched["Target"]["Input"])["InstanceIds"]) == sorted(ids + [new])
+
+    labctl.disarm_timer("siemsoar")  # instances running with no timer (e.g. an apply outside a session)
+    guard = labctl.ensure_timer("siemsoar")
+    when = datetime.strptime(guard["auto_stop_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    assert guard["guard"] and timedelta(minutes=55) < when - datetime.now(UTC) <= timedelta(hours=1, minutes=1)
+
+    labctl.down("siemsoar")  # nothing running, no timer: nothing armed
+    assert labctl.ensure_timer("siemsoar")["auto_stop_at"] is None
+
+
 def test_labctl_caps_hours_at_twelve(lab_env):
     from tools import labctl
     out = labctl.up("siemsoar", hours=500)
