@@ -1,0 +1,20 @@
+id: host-history-rm
+title: Stealth - clear bash history with rm (Atomic Red Team T1070.003 test 1)
+kind: atomic
+target: sensor
+malicious: true
+atomic:
+  technique: T1070.003
+  test_guid: a934276e-2be5-4a36-93fd-98adbb5bd4fc
+  ref: 388942adbd9641f4dfdcf079d7efe9a75ec0ac43
+  timeout: 120
+prepare:
+  - 'cp -a /root/.bash_history /tmp/siemsoar_hist_{short} 2>/dev/null || touch /tmp/siemsoar_hist_{short}'
+  - 'echo siemsoar-{short} >> /root/.bash_history'
+verify:
+  - 'test ! -e /root/.bash_history'
+cleanup:
+  - 'cp -a /tmp/siemsoar_hist_{short} /root/.bash_history && rm -f /tmp/siemsoar_hist_{short}'
+expect: []   # observation: no SIEMSOAR rule yet. The audit/FIM events of these runs are the basis of the
+             # rules written next (shadow first); until then the technique counts as exercised, not detected.
+settle_seconds: 120

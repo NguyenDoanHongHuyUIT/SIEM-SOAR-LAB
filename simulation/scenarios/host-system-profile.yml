@@ -1,0 +1,19 @@
+id: host-system-profile
+title: Persistence - append to the system shell profile (Atomic Red Team T1546.004 test 4)
+kind: atomic
+target: sensor
+malicious: true
+atomic:
+  technique: T1546.004
+  test_guid: 694b3cc8-6a78-4d35-9e74-0123d009e94b
+  ref: 388942adbd9641f4dfdcf079d7efe9a75ec0ac43
+  timeout: 120
+prepare:
+  - 'sha256sum /etc/profile > /tmp/siemsoar_profile_{short}'
+verify:
+  - '! sha256sum --status -c /tmp/siemsoar_profile_{short}'
+cleanup:
+  - 'rm -f /tmp/siemsoar_profile_{short}'
+expect: []   # observation: no SIEMSOAR rule yet. The audit/FIM events of these runs are the basis of the
+             # rules written next (shadow first); until then the technique counts as exercised, not detected.
+settle_seconds: 120

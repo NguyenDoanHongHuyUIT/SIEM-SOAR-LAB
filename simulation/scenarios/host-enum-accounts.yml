@@ -1,0 +1,15 @@
+id: host-enum-accounts
+title: Discovery - enumerate local accounts (Atomic Red Team T1087.001 test 1)
+kind: atomic
+target: sensor
+malicious: true
+atomic:
+  technique: T1087.001
+  test_guid: f8aab3dd-5990-4bf8-b8ab-2226c951696f
+  ref: 388942adbd9641f4dfdcf079d7efe9a75ec0ac43
+  timeout: 120
+verify:
+  - 'test -s /tmp/T1087.001.txt'
+expect: []   # observation: no SIEMSOAR rule yet. The audit/FIM events of these runs are the basis of the
+             # rules written next (shadow first); until then the technique counts as exercised, not detected.
+settle_seconds: 120
