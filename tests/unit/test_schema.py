@@ -76,6 +76,7 @@ def test_invalid_event_time_and_severity_are_rejected():
     bad_time = ev.clone(ev.guardduty_instance())
     bad_time["detail"]["createdAt"] = "not-a-timestamp"
     bad_time["detail"]["service"].pop("eventFirstSeen")
+    bad_time["detail"]["service"].pop("eventLastSeen", None)
     with pytest.raises(schema.InvalidEvent, match="event time"):
         schema.normalize_event(bad_time)
 
@@ -95,3 +96,25 @@ def test_risk_score_bounds_and_monotonic():
     low = schema.compute_risk(20, "low")
     assert 0 <= low < schema.compute_risk(20, "high") < schema.compute_risk(90, "high", 5, True) <= 100
     assert schema.compute_risk(100, "critical", 50, True) == 100
+
+
+def test_a_recurring_finding_is_timed_from_its_latest_activity():
+    """Lab 2026-10-19: RootCredentialUsage first seen 04:06:41, count 241, last seen 09:12:29, case at 09:30:16."""
+    e = ev.clone(ev.guardduty_key())
+    e["detail"]["service"].update(eventFirstSeen="2026-10-19T04:06:41.000Z", eventLastSeen="2026-10-19T09:12:29.000Z",
+                                  count=241)
+    a = schema.normalize_event(e)
+    assert a["event_time"] == "2026-10-19T09:12:29.000Z" and a["extra"]["first_seen"] == "2026-10-19T04:06:41.000Z"
+
+
+def test_temporary_credentials_are_one_identity_and_never_a_key_to_disable():
+    """ASIA keys are STS session credentials: a new one per console session. Same user -> same resource (one case),
+    and UpdateAccessKey cannot disable them, so no iam_key_disable plan."""
+    def finding(key):
+        e = ev.clone(ev.guardduty_key(user="lab-alice", key=key))
+        return schema.normalize_event(e)
+    a, b = finding("ASIAEXAMPLE000000001"), finding("ASIAEXAMPLE000000002")
+    assert a["resource"]["id"] == b["resource"]["id"] == "lab-alice/temporary-credentials"
+    assert a["dedup_key"] == b["dedup_key"] and a["response_plan"]["type"] == "none"
+    long_term = finding("AKIAIOSFODNN7EXAMPLE")
+    assert long_term["response_plan"]["type"] == "iam_key_disable" and long_term["resource"]["id"].endswith("EXAMPLE")

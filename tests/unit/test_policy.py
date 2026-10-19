@@ -118,7 +118,8 @@ def test_malformed_optional_fields_do_not_crash_the_ingest():
 def test_guardduty_context_is_extracted():
     e = ev.clone(ev.guardduty_instance())
     e["detail"]["service"]["action"] = {"networkConnectionAction": {"remoteIpDetails": {"ipAddressV4": "203.0.113.9"}}}
-    assert schema.normalize_event(e)["extra"] == {"remote_ip": "203.0.113.9", "finding_count": 3}
+    assert schema.normalize_event(e)["extra"] == {"remote_ip": "203.0.113.9", "finding_count": 3,
+                                                  "first_seen": "2026-10-06T09:59:00.000Z"}
 
 
 # ------------------------------------------------------------------ policy drives behaviour
