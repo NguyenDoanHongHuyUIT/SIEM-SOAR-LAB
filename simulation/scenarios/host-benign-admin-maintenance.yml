@@ -1,0 +1,20 @@
+id: host-benign-admin-maintenance
+title: Benign - routine maintenance that touches persistence locations (package with a cron job, a profile.d setting)
+kind: ssm_shell
+target: sensor
+malicious: false
+commands:
+  # Ubuntu's sysstat ships /etc/cron.d/sysstat (packages.ubuntu.com, jammy filelist): the cron location rule 100140
+  # watches, written by a package instead of an attacker
+  - 'apt-get -o DPkg::Lock::Timeout=120 install -y sysstat'
+  - 'test -e /etc/cron.d/sysstat'
+  # a common shell setting an administrator drops into /etc/profile.d (location of rule 100142)
+  - 'echo "export HISTTIMEFORMAT=\"%F %T \"" > /etc/profile.d/siemsoar-histtime-{short}.sh'
+cleanup:
+  - 'apt-get -o DPkg::Lock::Timeout=120 purge -y sysstat || true'
+  - 'rm -f /etc/profile.d/siemsoar-histtime-{short}.sh'
+expect: []                # nothing declared: every SIEMSOAR alert in this run is a false positive
+settle_seconds: 120
+notes: >
+  False-positive measurement for the persistence rules written from the Atomic observations (100140-100142): their
+  locations are also where packages and administrators write. Authored benign activity, not a public procedure.
