@@ -79,6 +79,8 @@ chỉ máy nhận phát hiện. Runner **từ chối** chạy trên máy còn ta
 trước, nếu không alert mới sẽ chặn restore (đúng thiết kế). Chạy kịch bản từ một bản checkout cố định (ví dụ
 `git worktree add ../run-main origin/main`), không từ thư mục đang sửa code: runner đọc lại thư mục kịch bản mỗi lượt.
 
+Nếu process của runner dừng trong lúc chờ (phiên làm việc bị ngắt, máy ngủ), lượt chạy đã thực thi nhưng chưa có kết quả: `python -m simulation.runner reobserve <run_id> ...` đọc kết quả từ log alert của manager (kể cả file đã xoay vòng theo ngày), cùng cửa sổ và cách gán như lượt chạy trực tiếp, và đánh dấu `reobserved_at`. Lỗi đọc SIEM (manager đang tắt) được ghi là `observation_error`, lượt chạy tính là *chưa quan sát*.
+
 Pcap cho test Suricata được bắt lại bằng `python -m tools.capture_pcaps` (cần Docker; chạy thủ tục Atomic trong mạng Docker tạm, ghi `rules/pcaps/provenance.json`). Khi thêm rule ET Open: tạo metadata `source: et-open` + `wazuh_rule_id`, rồi `python -m tools.refdata et-open` để ghim nội dung rule.
 
 ## 6. Vận hành rule

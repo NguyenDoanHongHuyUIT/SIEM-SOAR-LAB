@@ -81,15 +81,24 @@ def match_expectations(expect: list[dict], cases: list[dict], run: dict) -> list
     return checks
 
 
-def siem_alerts_command(agent: str) -> str:
+def siem_alerts_command(agent: str, day: str | None = None) -> str:
     """Shell snippet for the Wazuh manager: "<rule id> <timestamp>" of every SIEMSOAR alert of `agent`.
 
     alerts.json is where Wazuh records an alert whatever the rule's lifecycle state is, so this sees shadow rules too.
+    With `day` (YYYY-MM-DD, a run re-observed later), that day's rotated archive is read as well: Wazuh moves the
+    alerts of each day to logs/alerts/<year>/<Mon>/ossec-alerts-<dd>.json.gz.
     The agent name (= EC2 instance id) is validated because it ends up inside a shell command.
     """
     if not INSTANCE_RE.fullmatch(agent):
         raise ValueError(f"not an EC2 instance id: {agent!r}")
-    return (f"tail -n 50000 /var/ossec/logs/alerts/alerts.json | jq -r 'select(.agent.name==\"{agent}\") | "
+    source = "tail -n 50000 /var/ossec/logs/alerts/alerts.json"
+    if day is not None:
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
+            raise ValueError(f"not a date: {day!r}")
+        when = datetime.strptime(day, "%Y-%m-%d")
+        archive = f"/var/ossec/logs/alerts/{when:%Y}/{when:%b}/ossec-alerts-{when:%d}.json.gz"
+        source = f"zcat -f /var/ossec/logs/alerts/alerts.json {archive} 2>/dev/null"
+    return (f"{source} | jq -r 'select(.agent.name==\"{agent}\") | "
             f"select((.rule.groups // []) | index(\"siemsoar\")) | \"\\(.rule.id) \\(.timestamp)\"'")
 
 
@@ -151,8 +160,8 @@ class Runner:
         from siemsoar import response
         found = response.find_instances({"siemsoar:role": role, "siemsoar:plane": "ondemand"})
         ids = [i["id"] for i in sorted(found, key=lambda i: i["tags"].get("Name", ""))]  # lab-target-1 before -2
-        if not ids:
-            raise SystemExit(f"no running instance with siemsoar:role={role}; start the lab: soarctl lab up")
+        if not ids:  # an error, not SystemExit: inside a run it must be recorded, not end the process unrecorded
+            raise RuntimeError(f"no running instance with siemsoar:role={role}; start the lab: soarctl lab up")
         return ids[0]
 
     def attack_target(self, role: str) -> str:
@@ -185,6 +194,47 @@ class Runner:
             if time.time() >= deadline:
                 return cases
             time.sleep(min(poll, max(1, deadline - time.time())))
+
+    def conclude(self, run: dict, s: dict, cases: list[dict], day: str | None = None) -> dict:
+        """Verdict of a run: expected cases, the SIEM alerts on its target in its window, the benign-noise check.
+        A SIEM read that fails (manager stopped, SSM error) is recorded as an observation error and leaves the run
+        unobserved, instead of ending the process with the run half-written (lab 2026-10-19: the manager was being
+        resized while a run waited)."""
+        checks = match_expectations(s.get("expect", []), cases, run)
+        try:
+            run["siem_alerts"] = self.siem_alerts(run, day)
+        except Exception as err:  # noqa: BLE001 - recorded on the run
+            run["observation_error"] = str(err)[:300]
+            run.pop("siem_alerts", None)
+            checks.append({"name": "SIEM read", "ok": False, "detail": run["observation_error"]})
+        mine = [c for c in cases if case_in_run(c, run)]
+        if "siem_alerts" in run:
+            run["observed"] = observe_expectations(s.get("expect", []), run["siem_alerts"])
+            checks += [{"name": f"{key} alert observed in the SIEM", "ok": ok, "detail": ""}
+                       for key, ok in run["observed"].items() if ok or not _optional(s, key)]
+            if not run["malicious"]:
+                expected = {str(e["rule_id"]) for e in s.get("expect", [])}  # incl. declared false positives
+                noise = sorted({a["rule_id"] for a in run["siem_alerts"]} - expected)
+                checks.append({"name": "benign activity raised no unexpected SIEMSOAR alert", "ok": not noise,
+                               "detail": noise})
+                run["ground_truth_closed"] = self.close_benign_cases(run, mine)
+        run["result"] = {"pass": all(c["ok"] for c in checks), "checks": checks,
+                         "observed_cases": [c["case_id"] for c in mine]}
+        self.store.put_run(run)
+        return run
+
+    def reobserve(self, run_id: str) -> dict:
+        """Conclude a run whose process stopped during its wait (the session ended, the operator's machine slept):
+        the attack ran and its alerts are in the manager's alert log, so the verdict is read from there, with the same
+        window and attribution as a live run. Marked `reobserved_at`; a run that already has a verdict is refused."""
+        run = next((r for r in self.store.list_runs() if r["run_id"] == run_id), None)
+        if run is None:
+            raise ValueError(f"unknown run {run_id}")
+        if "result" in run or run.get("execution_error") or not run.get("ended_at"):
+            raise ValueError(f"{run_id} already has a verdict or never finished its execution")
+        s = load_scenarios()[run["scenario"]]
+        run["reobserved_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")[:-4] + "Z"
+        return self.conclude(run, s, self.store.list_cases(), day=run["started_at"][:10])
 
     def rules_release(self) -> str | None:
         """The rule release deployed on the lab (releases/current.json): every run is measured against one version."""
@@ -342,14 +392,14 @@ class Runner:
             f"logger -t siemsoar-sim 'pcap={name} run_id={run_id}'"])
         return {"instance": iid, "pcap": name, "output": out[-300:]}
 
-    def siem_alerts(self, run: dict) -> list[dict]:
+    def siem_alerts(self, run: dict, day: str | None = None) -> list[dict]:
         """Every SIEMSOAR alert Wazuh raised on the run's target inside the run window (any lifecycle state).
 
         Only hosts run a Wazuh agent: a cloud target (the IAM key of a Stratus run) has no SIEM layer, GuardDuty is
         its only detector, so there is nothing to read (lab session 3 crashed here on 'lab-victim/AKIA...')."""
         if not run.get("target") or not INSTANCE_RE.fullmatch(str(run["target"])):
             return []
-        output = self.ssm_run(self.instance("wazuh-manager"), [siem_alerts_command(run["target"])])
+        output = self.ssm_run(self.instance("wazuh-manager"), [siem_alerts_command(run["target"], day)])
         return in_window(parse_siem_alerts(output), run["started_at"], run["ended_at"], run["settle_seconds"])
 
     def close_benign_cases(self, run: dict, cases: list[dict]) -> list[str]:
@@ -507,22 +557,7 @@ class Runner:
         run["target_unique"] = bool(details.get("target_unique"))
         self.store.put_run(run)
         if kind != "robustness" and self.wait and "result" not in run:
-            cases = self.await_detections(s.get("expect", []), run)
-            checks = match_expectations(s.get("expect", []), cases, run)
-            run["siem_alerts"] = self.siem_alerts(run)
-            run["observed"] = observe_expectations(s.get("expect", []), run["siem_alerts"])
-            checks += [{"name": f"{key} alert observed in the SIEM", "ok": ok, "detail": ""}
-                       for key, ok in run["observed"].items() if ok or not _optional(s, key)]
-            mine = [c for c in cases if case_in_run(c, run)]
-            if not run["malicious"]:
-                expected = {str(e["rule_id"]) for e in s.get("expect", [])}  # incl. declared false positives
-                noise = sorted({a["rule_id"] for a in run["siem_alerts"]} - expected)
-                checks.append({"name": "benign activity raised no unexpected SIEMSOAR alert", "ok": not noise,
-                               "detail": noise})
-                run["ground_truth_closed"] = self.close_benign_cases(run, mine)
-            run["result"] = {"pass": all(c["ok"] for c in checks), "checks": checks,
-                             "observed_cases": [c["case_id"] for c in mine]}
-            self.store.put_run(run)
+            self.conclude(run, s, self.await_detections(s.get("expect", []), run))
         res = run.get("result", {})
         self.log(f"{run_id}: {'PASS' if res.get('pass') else 'FAIL' if res else 'recorded'}")
         for c in res.get("checks", []):
@@ -547,6 +582,8 @@ def main(argv: list[str] | None = None) -> int:
     ra.add_argument("--kind", action="append")
     ra.add_argument("--repeat", type=int, default=1)
     sub.add_parser("upload-pcaps")
+    ro = sub.add_parser("reobserve", help="conclude runs whose process stopped during the wait, from the alert log")
+    ro.add_argument("run_ids", nargs="+")
     args = ap.parse_args(argv)
 
     if args.cmd == "list":
@@ -554,6 +591,13 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{sid:<24} {s['kind']:<16} {s['title']}")
         return 0
     runner = Runner(args.prefix, dry_run=getattr(args, "dry_run", False), wait=not getattr(args, "no_wait", False))
+    if args.cmd == "reobserve":
+        for run_id in args.run_ids:
+            res = runner.reobserve(run_id).get("result", {})
+            runner.log(f"{run_id}: {'PASS' if res.get('pass') else 'FAIL'} (re-observed)")
+            for c in res.get("checks", []):
+                runner.log(f"   {'ok ' if c['ok'] else 'BAD'} {c['name']} {c.get('detail', '')}")
+        return 0
     if args.cmd == "upload-pcaps":
         print(runner.upload_pcaps())
         return 0
