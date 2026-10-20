@@ -20,7 +20,9 @@ description: >
   /root/.bash_history (Atomic T1070.003 #1) and truncate -s0 /root/.bash_history (#5). Variants that empty the
   file through a shell redirection (#2, #3) start no such command and are not seen by this rule.
 expected_fp: >
-  An administrator clearing their own history on purpose.
+  An administrator clearing their own history on purpose (not measured). Log housekeeping with the same commands
+  (truncate -s0 and rm -f of log files, run-202610200640-host-benign-file-housekeeping-edfb, rule as in c1ba4eb)
+  did not raise it.
 tests:
   - name: rm of root's history (Atomic T1070.003 #1, recorded on the lab)
     expect: match

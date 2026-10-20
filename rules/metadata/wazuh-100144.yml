@@ -19,7 +19,11 @@ description: >
   chmod run as root with a mode that sets the SetUID or SetGID bit (symbolic +s, or 4xxx/2xxx/6xxx), in any
   argument position. Observed on the lab: chmod u+xs and chmod g+xs on /tmp/evilBinary (Atomic T1548.001 #3, #5).
 expected_fp: >
-  Packages and administrators installing setuid helpers (rare outside package installs).
+  Measured on the lab (2026-10-20, rule as in c1ba4eb, run-202610200640-host-benign-file-housekeeping-edfb):
+  `chmod 2775` on a group-shared DIRECTORY raised it. A setgid directory is ordinary administration (chmod(1),
+  "SETUID AND SETGID BITS"); the execve record has the mode, not whether the target is a file or a directory. In
+  the same run chmod 755, g+w, -R a+rX and the sticky 1777 did not raise it. Packages installing setuid helpers:
+  not measured.
 tests:
   - name: chmod u+xs (Atomic T1548.001 #3, recorded on the lab)
     expect: match

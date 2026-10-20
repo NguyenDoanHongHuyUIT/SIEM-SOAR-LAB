@@ -12,6 +12,8 @@ commands:
 cleanup:
   - 'rm -f /etc/systemd/system/siemsoar-benign-{short}.service'
   - 'systemctl daemon-reload'
-expect: []                # nothing declared: every SIEMSOAR alert in this run is a false positive
+expect:                   # measured on the lab 2026-10-20; a declared false positive is still counted as FP
+  # the unit file is written by a shell (/usr/bin/dash), as the Atomic T1543.002 unit: who-data cannot tell them apart
+  - {source: wazuh, rule_id: "100141", case: false, false_positive: true}
 settle_seconds: 120
 notes: False-positive measurement for 100141. Authored benign activity, not a public procedure.

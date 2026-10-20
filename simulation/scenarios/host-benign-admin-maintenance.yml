@@ -13,7 +13,13 @@ commands:
 cleanup:
   - 'apt-get -o DPkg::Lock::Timeout=120 purge -y sysstat || true'
   - 'rm -f /etc/profile.d/siemsoar-histtime-{short}.sh'
-expect: []                # nothing declared: every SIEMSOAR alert in this run is a false positive
+expect:                   # measured on the lab 2026-10-20 (who-data); declared false positives are still counted as FP
+  # the sysstat cron file is written by /usr/bin/dpkg under /usr/bin/apt-get: the who-data exception, 100140 must not fire
+  - {source: wazuh, rule_id: "100146", case: false}
+  # the profile.d file is written by a shell (/usr/bin/dash), the same writer as T1546.004
+  - {source: wazuh, rule_id: "100142", case: false, false_positive: true}
+  # apt runs dpkg-preconfigure (perl), which reads /etc/shadow: the accepted false positive of 100145
+  - {source: wazuh, rule_id: "100145", case: false, false_positive: true, optional: true}
 settle_seconds: 120
 notes: >
   False-positive measurement for the persistence rules written from the Atomic observations (100140-100142): their
