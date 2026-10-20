@@ -17,6 +17,18 @@
 * Các lỗi chỉ lộ ra trên AWS thật đã được sửa và ghi trong lịch sử PR: GuardDuty Low bị lọc, OIDC sub, FIM theo file chết sau rename, quyền SSM, Stratus cần `ec2:DescribeAccountAttributes`, case GuardDuty về key của người vận hành (giờ chỉ thông báo).
 * Độ trễ GuardDuty đo được cho `CloudTrailLoggingDisabled`: 18 / 14,6 / 18,6 phút (3 lần). AWS không công bố giới hạn trên. Kịch bản Stratus vì vậy không cắt theo thời gian (key riêng của lượt).
 * Cửa sổ chờ (`settle_seconds`) của kịch bản là lựa chọn của người vận hành. Báo cáo kiểm nó bằng số đo (`window_headroom`: phát hiện muộn nhất so với cửa sổ) và đánh dấu "SÁT" khi phát hiện dùng quá nửa cửa sổ.
+* **Telemetry audit từng tắt âm thầm** (lab 20/10/2026): `unattended-upgrade` nâng cấp `systemd` lúc 07:11 giữa
+  phiên, `systemd-journald` khởi động lại với `Audit=no` (mặc định của Ubuntu 22.04, ghi chú `#Audit=no` trong
+  `/etc/systemd/journald.conf`) và **tắt kernel audit** (`op=set audit_enabled=0`, tiến trình `systemd-journald`) trên
+  2 máy mục tiêu: mất `execve`, đọc `/etc/shadow` và who-data cho tới khi phát hiện. Wazuh chỉ có rule chính thức 80705
+  (level 3, "Configuration changed"). Đã sửa: drop-in `Audit=yes` (journald khởi động lại thì **bật** audit; kiểm trên
+  lab), tắt `unattended-upgrade` trên máy lab (phần mềm không đổi giữa các lượt đo; máy nhận bản vá khi được dựng lại),
+  script cài agent kiểm audit + who-data và thất bại nếu thiếu. Sensor (nơi chạy mọi kịch bản audit) không bị ảnh hưởng:
+  lần nâng cấp systemd của nó là 18/10, trước khi có telemetry audit, và không có bản ghi `audit_enabled=0` nào từ đó.
+  Chưa có rule SIEMSOAR cho việc tắt audit: chỉ mục ART ghim có T1685.004 #1/#2 (xóa rule / `auditctl -e 0`), cần lượt
+  quan sát trước khi viết rule.
+* Cảnh báo `indexer-connector` ("No available server") trong `ossec.log` của manager xuất hiện **khi khởi động**: manager
+  lên trước indexer (~40 s) rồi kết nối được ("IndexerConnector initialized successfully"); không mất dữ liệu.
 * auditd ghi **mọi** lệnh chạy với quyền root: tăng mạnh số alert mức 3 (trong vài phút sau khi bật: khoảng 1 100 alert 80792 mỗi máy, phần lớn do chính script cài đặt). Đo trên lab (20/10/2026): máy mục tiêu rảnh sinh 105 alert 80792 trong 40 phút (khoảng 2,6/phút, phần lớn là lệnh định kỳ của chính Wazuh Agent: `ps`, `df`, `last`); manager `events_dropped = 0`, alert 40 MB, indexer 44 MB sau hai ngày. Lượng này tăng theo số máy và hoạt động quản trị; `events_dropped` của analysisd là chỉ số theo dõi.
 * Atomic Red Team (commit ghim, cũng là commit mới nhất khi kiểm) không có test Linux nào thuộc tactic lateral-movement của ATT&CK v20: lab có kịch bản xuyên máy (dò cổng, dò mật khẩu SSH) nhưng không có kịch bản lan truyền ngang, và không tự viết.
 * 13 test Atomic của 7 kỹ thuật mới đã chạy ở chế độ quan sát (lab 20/10/2026); rule 100140–100145 (shadow) được viết từ chính các sự kiện đó. **Không phát hiện được** với telemetry hiện tại: đọc `/etc/passwd` và liệt kê tài khoản (T1003.008 #3, T1087.001 #1/#3), vì mọi chương trình phân giải tên người dùng đều đọc file này. **Biến thể không bắt được**: xóa lịch sử bằng chuyển hướng shell (T1070.003 #2/#3) không chạy lệnh nào mang tên file; `chmod` dùng đường dẫn hay mode dạng mã hex của audit cũng không khớp.

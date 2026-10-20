@@ -23,6 +23,11 @@ if [ ! -x /var/ossec/bin/wazuh-control ]; then
   shred -u /tmp/wazuh-passwords.txt wazuh-install-files.tar || true
 fi
 
+# No unattended package upgrades on the lab (2026-10-20: unattended-upgrade changed packages in the middle of a lab
+# session on every host); see agent/install_wazuh_agent.sh
+systemctl disable --now apt-daily-upgrade.timer >/dev/null 2>&1 || true
+printf 'APT::Periodic::Unattended-Upgrade "0";\n' > /etc/apt/apt.conf.d/52siemsoar-no-unattended-upgrade
+
 log "installing custom EventBridge integration"
 install -m 750 -o root -g wazuh "$BOOT/wazuh/integrations/custom-eventbridge" /var/ossec/integrations/custom-eventbridge
 install -m 750 -o root -g wazuh "$BOOT/wazuh/integrations/custom-eventbridge.py" /var/ossec/integrations/custom-eventbridge.py
