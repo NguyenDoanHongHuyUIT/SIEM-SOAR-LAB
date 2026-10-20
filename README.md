@@ -86,11 +86,11 @@ Triển khai thật (chi tiết từng bước, kể cả tạo Slack App: [docs
 |---|---|---|
 | Logic case, dedup, token một lần, double-click, breaker, fail-safe, restore (mọi ENI), IAM key rotation idempotent, phân giải agent→instance | 330+ test với moto, workflow chạy đúng ASL + handler thật | Hành vi AWS thật (moto không mô phỏng hết ràng buộc IAM/SG) |
 | Rule Suricata | `suricata -T` + replay pcap **bắt từ thủ tục Atomic thật** bằng **Suricata thật** với rule ET Open ghim; pcap lành tính không được kích hoạt rule active; `eve_logtest`: alert EVE thật → rule Wazuh thật (id khai trong metadata, group `siemsoar_<state>`, MITRE) | Độ nhiễu trên traffic production |
-| Rule Wazuh | Job CI `wazuh-engine`: `wazuh-analysisd -t` + mọi test trong metadata (log thô qua logtest API, sự kiện FIM qua hàng đợi analysisd) trên image Wazuh 4.14.8 chính thức; chạy tay 23/23 PASS, kể cả rule bọc rule chính thức 5763/5712 với đúng ngưỡng 8 sự kiện | Hành vi theo thời gian thật của `frequency/timeframe` (engine đếm theo thời điểm nhận) |
+| Rule Wazuh | Job CI `wazuh-engine`: `wazuh-analysisd -t` + mọi test trong metadata (log thô qua logtest API, sự kiện FIM qua hàng đợi analysisd) trên image Wazuh 4.14.8 chính thức; chạy tay 59/59 PASS (20/10/2026), kể cả rule bọc rule chính thức 5763/5712 với đúng ngưỡng 8 sự kiện và sự kiện FIM *who-data* | Hành vi theo thời gian thật của `frequency/timeframe` (engine đếm theo thời điểm nhận) |
 | Terraform | `fmt`, `validate`, `terraform test`; **apply thật** qua GitHub Actions (OIDC, environment có người duyệt) | - |
 | Bootstrap Wazuh/Suricata | `bash -n` + shellcheck; **chạy thật** trên EC2 Ubuntu (Wazuh 4.14.8, Suricata 7.0) | - |
 | Toàn hệ thống trên AWS thật (phiên lab 17–19/10/2026) | Atomic/Stratus → Wazuh/GuardDuty → case → Slack → người duyệt → cách ly EC2 / vô hiệu key IAM thật → evidence → restore; rollback rule shadow ↔ active; robustness (double-click, Slack hỏng, lỗi giữa chừng); **nhiều máy**: kịch bản xuyên máy, cô lập đúng một máy mục tiêu và chỉ role riêng của nó (kiểm bằng CloudTrail) | Baseline thủ công (chưa diễn tập); số lượt còn nhỏ (báo cáo in khoảng tin cậy 95%) |
-| Telemetry auditd | Cài trên mọi máy lab, rule đúng dạng tài liệu Wazuh; manager nhận alert chính thức 80792 từ cả 3 agent, `events_dropped = 0` | Rule SIEMSOAR trên dữ liệu audit (đang quan sát 13 test Atomic mới); lượng log nền |
+| Telemetry auditd | Cài trên mọi máy lab, rule đúng dạng tài liệu Wazuh; manager nhận alert chính thức 80792 từ cả 3 agent, `events_dropped = 0` | Rule audit 100143–100145 mới ở shadow, FP đo trên ít lượt lành tính (khoảng tin cậy rộng); lượng log nền chỉ đo lúc máy rảnh (~2,6 alert/phút/máy) |
 
 Nghĩa là: logic được test tự động, và luồng đầu-cuối đã chạy trên AWS thật với quyết định của người. Số liệu nằm trong
 `reports/` (sinh từ DynamoDB/CloudTrail, không nhập tay); giới hạn ở [docs/limitations.md](docs/limitations.md).
@@ -132,5 +132,5 @@ viết `custom-eventbridge` (không qua webhook công khai); (2) thêm trạng t
 cho bước restore (hình 3: "thực sự mối đe dọa?" → restore TP/FP); (4) rotate key bằng Secrets Manager khi xác nhận bị lộ;
 (5) circuit breaker + `dry_run` + fault-injection để chứng minh robustness; (6) kênh quyết định dự phòng `soarctl`
 (dùng thông tin xác thực AWS, không thể giả mạo qua email); (7) giảm FP bằng **rule ngoại lệ dựa trên log thật**
-(100112: tài khoản dịch vụ `nologin`), không sửa thẳng rule đang active; (8) **nhiều máy mục tiêu**, mỗi máy một IAM role
+(100112: tài khoản dịch vụ `nologin`; 100146: file cron do `dpkg` dưới `apt-get` ghi, theo FIM *who-data*), không sửa thẳng rule đang active; (8) **nhiều máy mục tiêu**, mỗi máy một IAM role
 để cô lập một máy không cắt phiên của máy khác; (9) telemetry **auditd** để bắt biến thể không đi qua log của công cụ.

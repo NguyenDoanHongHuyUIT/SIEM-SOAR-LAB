@@ -19,7 +19,10 @@ description: >
   A unit file under /etc/systemd/system was added or changed. Observed on the lab: FIM 554 on
   /etc/systemd/system/art-systemd-service.service (Atomic T1543.002 #1).
 expected_fp: >
-  Administrators adding or overriding services; packages writing drop-ins there.
+  Measured on the lab (2026-10-20, rule as in c1ba4eb, run-202610200638-host-benign-custom-service-b5ae): an
+  administrator adding a unit file raised it. Who-data shows that write as /usr/bin/dash, the same writer as the
+  Atomic T1543.002 #1 unit (/usr/bin/bash under the Atomic harness), so who-data does not separate them. Packages
+  install their units under /lib/systemd/system, outside this rule.
 tests:
   - name: unit added (Atomic T1543.002 #1 on the lab)
     expect: match

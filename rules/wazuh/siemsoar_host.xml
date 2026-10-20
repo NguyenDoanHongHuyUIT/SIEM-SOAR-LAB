@@ -83,6 +83,17 @@
     </mitre>
   </rule>
 
+  <!-- Who-data exception (lab 2026-10-20): with whodata="yes" the agent reports the process that wrote the file.
+       apt-get installing sysstat wrote /etc/cron.d/sysstat (and its .dpkg-new temporary file) through /usr/bin/dpkg,
+       parent /usr/bin/apt-get; the Atomic T1053.003 #3 write was /usr/bin/dash, parent the Atomic harness
+       (python3.10). Fields as named by src/analysisd/decoders/syscheck.c (process_name, parent_name). -->
+  <rule id="100146" level="3">
+    <if_sid>100140</if_sid>
+    <field name="process_name">^/usr/bin/dpkg$</field>
+    <field name="parent_name">^/usr/bin/apt-get$</field>
+    <description>SIEMSOAR: cron file written by the package manager (dpkg under apt-get)</description>
+  </rule>
+
   <!-- Lab-specific: a deception (canary) directory no official rule knows about. -->
   <rule id="100101" level="7">
     <if_sid>550,554</if_sid>

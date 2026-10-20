@@ -1,0 +1,62 @@
+id: wazuh-100146
+engine: wazuh
+rule_id: 100146
+name: Cron file written by the package manager (who-data exception of 100140)
+state: shadow
+response: none
+mitre: []                # an exception: it claims no technique, it takes package-manager writes out of 100140
+wraps: []                # hangs under the SIEMSOAR rule 100140 (itself under the official 550/554)
+references:
+  - https://documentation.wazuh.com/current/user-manual/capabilities/file-integrity/advanced-settings.html
+  - https://github.com/wazuh/wazuh/blob/v4.14.8/src/analysisd/decoders/syscheck.c
+  - https://manpages.ubuntu.com/manpages/jammy/man1/dpkg.1.html
+  - https://attack.mitre.org/techniques/T1546/016/
+owner: nguyen-doan-hong-huy
+created: 2026-10-20
+data_source: Wazuh syscheck (FIM) in who-data mode (auditd) on /etc/cron.d, /var/spool/cron/crontabs
+description: >
+  Wazuh's who-data FIM reports, with each change, the process that made it. On the lab (2026-10-20, who-data on
+  since PR #45), apt-get installing sysstat wrote /etc/cron.d/sysstat and its .dpkg-new temporary file through
+  /usr/bin/dpkg, parent /usr/bin/apt-get, while the Atomic T1053.003 #3 write was /usr/bin/dash under the Atomic
+  harness (python3.10). A cron file the package manager installs is alerted at level 3 instead of opening a
+  containment case. Residual risk: a malicious package installed with apt-get (ATT&CK T1546.016, Installer
+  Packages) writes its cron file the same way and is only recorded at level 3; a direct `dpkg -i` (parent a shell)
+  and every other writer stay 100140. Unmeasured writers of the same files: unattended-upgrade (python3 parent),
+  the `apt` front end.
+expected_fp: none known; it is itself the exception for package-manager writes.
+tests:
+  - name: cron.d file written by dpkg under apt-get (sysstat install on the lab, alert 1792478141.20792272)
+    expect: match
+    fim:
+      path: /etc/cron.d/sysstat
+      type: added
+      audit: {user_id: "0", user_name: root, group_id: "0", group_name: root, effective_uid: "0",
+              effective_name: root, process_id: 3364, process_name: /usr/bin/dpkg, cwd: /,
+              parent_name: /usr/bin/apt-get, parent_cwd: /var/snap/amazon-ssm-agent/13349, ppid: 3324}
+  - name: dpkg temporary file of the same install (alert 1792478140.20790352)
+    expect: match
+    fim:
+      path: /etc/cron.d/sysstat.dpkg-new
+      type: added
+      audit: {user_id: "0", user_name: root, group_id: "0", group_name: root, effective_uid: "0",
+              effective_name: root, process_id: 3345, process_name: /usr/bin/dpkg, cwd: /,
+              parent_name: /usr/bin/apt-get, parent_cwd: /var/snap/amazon-ssm-agent/13349, ppid: 3324}
+  - name: the Atomic T1053.003 #3 write, a shell under the harness (stays 100140, alert 1792478605.22861270)
+    expect: no_match
+    fim:
+      path: /etc/cron.d/persistevil
+      type: added
+      audit: {user_id: "0", user_name: root, group_id: "0", group_name: root, effective_uid: "0",
+              effective_name: root, process_id: 4370, process_name: /usr/bin/dash,
+              cwd: /var/snap/amazon-ssm-agent/13349, parent_name: /usr/bin/python3.10,
+              parent_cwd: /var/snap/amazon-ssm-agent/13349, ppid: 4368}
+  - name: dpkg run directly from a shell, not under apt-get (stays 100140)
+    expect: no_match
+    fim:
+      path: /etc/cron.d/sysstat
+      type: added
+      audit: {user_id: "0", user_name: root, process_name: /usr/bin/dpkg, parent_name: /usr/bin/bash, ppid: 3324,
+              process_id: 3364}
+  - name: realtime event without who-data (no writer known, stays 100140)
+    expect: no_match
+    fim: {path: /etc/cron.d/sysstat, type: added}

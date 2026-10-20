@@ -20,8 +20,9 @@ description: >
   /etc/cron.d/persistevil and /var/spool/cron/crontabs/persistevil (Atomic T1053.003 #3, #4).
 expected_fp: >
   Measured on the lab (2026-10-20, rule as in a3e888c): 1 false positive in 4 benign runs, apt installing
-  sysstat (/etc/cron.d/sysstat and its .dpkg-new temporary file). FIM does not record which process wrote the
-  file; Wazuh's who-data FIM mode (auditd) would, so package-manager writes could be told apart.
+  sysstat (/etc/cron.d/sysstat and its .dpkg-new temporary file). With who-data (2026-10-20) the writer of that
+  file is /usr/bin/dpkg under /usr/bin/apt-get: those writes go to the level-3 exception 100146. A cron file an
+  administrator writes by hand is written by a shell, like the Atomic one, and stays a false positive of this rule.
 tests:
   - name: cron.d entry added (Atomic T1053.003 #3 on the lab)
     expect: match
@@ -32,3 +33,22 @@ tests:
   - name: a file outside the cron directories
     expect: no_match
     fim: {path: /etc/hosts, type: modified}
+  # who-data events as the agent sent them on the lab (2026-10-20), audit fields from alerts 1792478605.22861270
+  # and 1792478141.20792272
+  - name: cron.d entry written by a shell under the Atomic harness, who-data (T1053.003 #3 on the lab)
+    expect: match
+    fim:
+      path: /etc/cron.d/persistevil
+      type: added
+      audit: {user_id: "0", user_name: root, group_id: "0", group_name: root, effective_uid: "0",
+              effective_name: root, process_id: 4370, process_name: /usr/bin/dash,
+              cwd: /var/snap/amazon-ssm-agent/13349, parent_name: /usr/bin/python3.10,
+              parent_cwd: /var/snap/amazon-ssm-agent/13349, ppid: 4368}
+  - name: cron.d file written by dpkg under apt-get, who-data (sysstat install on the lab; goes to 100146)
+    expect: no_match
+    fim:
+      path: /etc/cron.d/sysstat
+      type: added
+      audit: {user_id: "0", user_name: root, group_id: "0", group_name: root, effective_uid: "0",
+              effective_name: root, process_id: 3364, process_name: /usr/bin/dpkg, cwd: /,
+              parent_name: /usr/bin/apt-get, parent_cwd: /var/snap/amazon-ssm-agent/13349, ppid: 3324}

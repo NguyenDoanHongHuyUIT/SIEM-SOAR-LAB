@@ -19,8 +19,10 @@ description: >
   A shell start-up file was changed: commands in it run at every login. Observed on the lab: FIM 550 on
   /root/.bashrc (Atomic T1546.004 #2) and /etc/profile (T1546.004 #4).
 expected_fp: >
-  Measured on the lab (2026-10-20, rule as in a3e888c): 1 false positive in 4 benign runs, an administrator
-  adding a profile.d setting. The same file write as an attacker's; only who and why differ.
+  Measured on the lab (2026-10-20, rules as in a3e888c and c1ba4eb): an administrator adding a profile.d setting
+  raised it in each admin-maintenance run. Who-data (run-202610200635-host-benign-admin-maintenance-bd58) shows the
+  writer as /usr/bin/dash, as for the Atomic T1546.004 #4 append: the same write, only intent differs, and who-data
+  does not separate them. No package write to these files has been observed, so no package exception is written.
 tests:
   - name: root .bashrc changed (Atomic T1546.004 #2 on the lab)
     expect: match

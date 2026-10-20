@@ -18,6 +18,9 @@ Two kinds of metadata tests (rules/metadata/wazuh-*.yml):
   * file-integrity events: `fim: {path: /etc/passwd, type: modified|added}`. Syscheck events never go through logtest
     (they use a dedicated analysisd path), so they are written to analysisd's queue socket inside the manager
     container (`--container`, via `docker exec`) and the resulting alert is read back from alerts.json.
+    `fim: {..., audit: {process_name: /usr/bin/dpkg, ...}}` sends a who-data event (`mode: whodata`): the `audit`
+    object is the agent's, keys as parsed by src/analysisd/decoders/syscheck.c (user_name, process_name, parent_name,
+    ppid, process_id, ...); rules see them as fields of the same names.
 
 Each logtest test opens a fresh session (no token on the first request), so `firedtimes`/frequency state never leaks
 between tests; the session is closed afterwards. `no_match` means the rule never fires on any line. Wazuh counts
@@ -27,6 +30,7 @@ frequency by arrival time, so timing-based cases (events spread over the timefra
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -99,13 +103,16 @@ class LogtestClient:
 # for the alert it produces (one alert per event: the most specific rule that matched) and print that rule id.
 _FIM_SCRIPT = r"""
 import json, os, socket, sys, time
-path, kind = sys.argv[1:3]
+path, kind, audit = sys.argv[1], sys.argv[2], json.loads(sys.argv[3])
 alerts_file = "/var/ossec/logs/alerts/alerts.json"
 offset = os.path.getsize(alerts_file) if os.path.exists(alerts_file) else 0
 attrs = {"type": "file", "size": 1200, "perm": "rw-r--r--", "uid": "0", "gid": "0", "user_name": "root",
          "group_name": "root", "inode": 123, "mtime": 1760000000, "hash_md5": "a" * 32, "hash_sha1": "b" * 40,
          "hash_sha256": "c" * 64, "checksum": "d" * 40}
-data = {"path": path, "mode": "realtime", "type": kind, "timestamp": int(time.time()), "attributes": attrs}
+data = {"path": path, "mode": "whodata" if audit else "realtime", "type": kind, "timestamp": int(time.time()),
+        "attributes": attrs}
+if audit:
+    data["audit"] = audit
 if kind == "modified":
     data["changed_attributes"] = ["size", "mtime", "md5", "sha1", "sha256"]
     data["old_attributes"] = {**attrs, "size": 1100, "hash_md5": "e" * 32}
@@ -144,10 +151,12 @@ class FimQueue:
     def __init__(self, container: str):
         self.container = container
 
-    def rule_for(self, path: str, kind: str = "modified") -> str | None:
-        """Id of the rule that alerted for a FIM event on `path`, None if no alert was produced in time."""
+    def rule_for(self, path: str, kind: str = "modified", audit: dict | None = None) -> str | None:
+        """Id of the rule that alerted for a FIM event on `path`, None if no alert was produced in time.
+        `audit` (who-data: the process that wrote the file) makes it a who-data event."""
         res = subprocess.run(["docker", "exec", "-i", self.container, "/var/ossec/framework/python/bin/python3", "-",
-                              path, kind], input=_FIM_SCRIPT, capture_output=True, text=True, timeout=60)
+                              path, kind, json.dumps(audit or {})], input=_FIM_SCRIPT, capture_output=True, text=True,
+                             timeout=60)
         if res.returncode == 3:
             return None
         if res.returncode:
@@ -192,9 +201,10 @@ def run_sample(client, rule_id: int | str, test: dict) -> tuple[bool, str]:
 
 def run_fim(fim: FimQueue, rule_id: int | str, test: dict) -> tuple[bool, str]:
     spec = test["fim"]
-    fired = fim.rule_for(spec["path"], spec.get("type", "modified"))
+    fired = fim.rule_for(spec["path"], spec.get("type", "modified"), spec.get("audit"))
     ok = (fired == str(rule_id)) == (test["expect"] == "match")
-    return ok, f"FIM event on {spec['path']} alerted with rule {fired or 'none'}"
+    who = f" written by {spec['audit'].get('process_name')}" if spec.get("audit") else ""
+    return ok, f"FIM event on {spec['path']}{who} alerted with rule {fired or 'none'}"
 
 
 def run_all(client, meta: dict[str, dict], fim: FimQueue | None = None) -> list[Result]:

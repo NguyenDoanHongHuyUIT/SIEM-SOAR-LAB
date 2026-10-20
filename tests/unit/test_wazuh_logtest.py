@@ -65,8 +65,8 @@ class FakeFim:
     def __init__(self, rule):
         self.rule, self.calls = rule, []
 
-    def rule_for(self, path, kind="modified"):
-        self.calls.append((path, kind))
+    def rule_for(self, path, kind="modified", audit=None):
+        self.calls.append((path, kind) if audit is None else (path, kind, audit))
         return self.rule if path == "/etc/passwd" else "550"
 
 
@@ -79,6 +79,20 @@ def test_fim_tests_use_the_queue_and_skip_without_a_container():
     assert fim.calls == [("/etc/passwd", "modified"), ("/etc/hosts", "added")]
     assert [r.status for r in wl.run_all(FakeClient(), meta)] == ["SKIP", "SKIP"]
     assert [r.status for r in wl.run_all(FakeClient(), meta, FakeFim("550"))] == ["FAIL", "PASS"]
+
+
+def test_whodata_fim_tests_pass_the_writing_process():
+    meta = {"wazuh-100100": {"engine": "wazuh", "rule_id": 100100, "state": "active", "tests": [
+        {"name": "dpkg", "expect": "match", "fim": {"path": "/etc/passwd", "audit": {"process_name": "/usr/bin/dpkg"}}}]}}
+    fim = FakeFim("100100")
+    assert [r.status for r in wl.run_all(FakeClient(), meta, fim)] == ["PASS"]
+    assert fim.calls == [("/etc/passwd", "modified", {"process_name": "/usr/bin/dpkg"})]
+
+
+def test_fim_script_sends_whodata_only_when_an_audit_object_is_given():
+    """The event shape analysisd parses (decoders/syscheck.c): mode whodata and an `audit` object."""
+    assert 'json.loads(sys.argv[3])' in wl._FIM_SCRIPT
+    assert '"whodata" if audit else "realtime"' in wl._FIM_SCRIPT and 'data["audit"] = audit' in wl._FIM_SCRIPT
 
 
 def test_repository_wazuh_tests_are_all_executable_on_the_real_engine():

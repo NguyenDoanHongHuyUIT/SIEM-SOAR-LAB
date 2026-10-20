@@ -16,7 +16,9 @@ commands:
   - 'truncate -s0 /var/tmp/siemsoar-{short}/logs/app.log && rm -f /var/tmp/siemsoar-{short}/logs/app.log.1'
 cleanup:
   - 'rm -rf /var/tmp/siemsoar-{short}'
-expect: []                # nothing declared: every SIEMSOAR alert in this run is a false positive
+expect:                   # measured on the lab 2026-10-20; a declared false positive is still counted as FP
+  # chmod 2775 on the shared directory: execve shows the mode, not that the target is a directory
+  - {source: wazuh, rule_id: "100144", case: false, false_positive: true}
 settle_seconds: 120
 notes: >
   False-positive measurement for 100143 (rm/truncate) and 100144 (chmod): the benign runs so far never ran these
