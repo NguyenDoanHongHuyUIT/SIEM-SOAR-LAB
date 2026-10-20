@@ -41,6 +41,7 @@ python -m evaluation.evaluate --days 30      # giờ lab, chi phí, baseline l�
 | `host-benign-service-account` | quản trị tạo service account (lành tính) | — | FP đã biết: 100110, 100100 |
 | `net-benign-admin` | curl metadata service, trang công khai, `apt-get update` | — | FP đã biết: ET HUNTING 2034567 → 110103 |
 | `host-canary-shadow` | chạm thư mục canary (lành tính) | — | 100101 (kiểm vòng đời shadow) |
+| `host-benign-admin-maintenance` | cài/gỡ gói `sysstat` (gói Ubuntu có `/etc/cron.d/sysstat`), thêm `HISTTIMEFORMAT` vào `/etc/profile.d` | — | không khai báo: mọi alert là FP (đo FP của 100140–100142) |
 | `host-ssh-burst-existing` | thủ tục lab (sshd phụ có mật khẩu) | **tự khai**, không làm bằng chứng | 100120 |
 | `xhost-portscan-target` | Atomic T1046 #2 từ sensor tới `lab-target-1` | chỉ mục ART | ET 2009582 → 110101 (trên sensor) |
 | `xhost-ssh-credstuffing-target` | Atomic T1110.004 #1 từ sensor tới `lab-target-1` (`observe_on: lab-target`) | chỉ mục ART | 100121 (trên máy mục tiêu) |
