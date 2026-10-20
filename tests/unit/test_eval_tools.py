@@ -215,6 +215,7 @@ def test_observe_alerts_filters_on_the_manager_and_validates_the_agent():
                              datetime(2026, 10, 19, 9, 31, 16, tzinfo=UTC))
     assert '.timestamp >= "2026-10-19T09:26:45"' in cmd and '.timestamp <= "2026-10-19T09:31:16"' in cmd
     assert "group_by(.id)" in cmd and ".data.audit.command" in cmd and ".syscheck.path" in cmd
+    assert "jq -R -c 'fromjson? | select(" in cmd
     with pytest.raises(ValueError, match="EC2 instance id"):
         oa.summary_command('i-1" or true', datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 1, tzinfo=UTC))
 
@@ -226,7 +227,10 @@ def test_a_run_is_reobserved_from_the_alert_log_including_the_rotated_archive(mo
     # plain and gzipped archive names (the lab's were plain .json); today's archive is alerts.json itself (-ef)
     archive = "/var/ossec/logs/alerts/2026/Oct/ossec-alerts-19.json"
     assert f"for f in {archive} {archive}.gz;" in cmd and '-ef /var/ossec/logs/alerts/alerts.json' in cmd
-    assert "zcat -f $src" in cmd
+    # archives first, the file being written last; each line parsed alone (a half-written last line is skipped)
+    assert cmd.index('zcat -f "$f"; echo') < cmd.index("cat /var/ossec/logs/alerts/alerts.json)")
+    assert "jq -R -r 'fromjson? | select(" in cmd
+    assert "jq -R -r 'fromjson? | select(" in runner.siem_alerts_command("i-06c071a9fc8745d6c")
     with pytest.raises(ValueError, match="not a date"):
         runner.siem_alerts_command("i-06c071a9fc8745d6c", "19/10; rm -rf /")
 

@@ -89,6 +89,11 @@ def siem_alerts_command(agent: str, day: str | None = None) -> str:
     alerts of each day to logs/alerts/<year>/<Mon>/ossec-alerts-<dd>.json, gzipped by monitord at day change when it
     runs then (monitord.compress). Lab 2026-10-20: the manager was stopped at midnight and the archives stayed plain
     .json, so both names are read. Today's archive is a hard link to alerts.json (`-ef`): read once, not twice.
+
+    analysisd appends to alerts.json while it is read, so its last line can be half-written. Lines are parsed one by one
+    (`jq -R 'fromjson?'`): an incomplete line is skipped instead of failing the whole read, and alerts.json comes last
+    so that line cannot be glued to an archive's first line (lab 2026-10-20: "parse error: Invalid literal at line
+    14981, column 2189", the junction of alerts.json and ossec-alerts-19.json).
     The agent name (= EC2 instance id) is validated because it ends up inside a shell command.
     """
     if not INSTANCE_RE.fullmatch(agent):
@@ -100,10 +105,10 @@ def siem_alerts_command(agent: str, day: str | None = None) -> str:
         when = datetime.strptime(day, "%Y-%m-%d")
         archive = f"/var/ossec/logs/alerts/{when:%Y}/{when:%b}/ossec-alerts-{when:%d}.json"
         current = "/var/ossec/logs/alerts/alerts.json"
-        source = (f"(src={current}; for f in {archive} {archive}.gz; do "
-                  f"if [ -e \"$f\" ] && ! [ \"$f\" -ef {current} ]; then src=\"$src $f\"; fi; done; "
-                  f"zcat -f $src 2>/dev/null)")
-    return (f"{source} | jq -r 'select(.agent.name==\"{agent}\") | "
+        source = (f"(for f in {archive} {archive}.gz; do "
+                  f"if [ -e \"$f\" ] && ! [ \"$f\" -ef {current} ]; then zcat -f \"$f\"; echo; fi; done; "
+                  f"cat {current}) 2>/dev/null")
+    return (f"{source} | jq -R -r 'fromjson? | select(.agent.name==\"{agent}\") | "
             f"select((.rule.groups // []) | index(\"siemsoar\")) | \"\\(.rule.id) \\(.timestamp)\"'")
 
 
