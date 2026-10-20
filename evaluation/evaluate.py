@@ -227,18 +227,51 @@ def _with_intervals(b: dict, fp_key: str = "fp") -> dict:
     return b
 
 
-def detection_quality(runs: list[dict], rules_meta: dict | None = None) -> dict:
+_RELEASE_FILES: dict[str, set[str] | None] = {}
+
+
+def release_metadata(sha: str) -> set[str] | None:
+    """Metadata file names (`wazuh-100140.yml`) present in the rule release `sha`, read from the git history; None when
+    the commit is not available (shallow clone, other repository)."""
+    if sha not in _RELEASE_FILES:
+        import subprocess
+        try:
+            out = subprocess.run(["git", "ls-tree", "--name-only", sha, "rules/metadata/"], cwd=ROOT,
+                                 capture_output=True, text=True, check=True, timeout=30).stdout
+            _RELEASE_FILES[sha] = {Path(line).name for line in out.splitlines() if line.strip()}
+        except (OSError, subprocess.SubprocessError):
+            _RELEASE_FILES[sha] = None
+    return _RELEASE_FILES[sha]
+
+
+def rule_was_deployed(meta_key: str, meta: dict, run: dict, releases=release_metadata) -> bool:
+    """Could this rule have fired during `run`? Yes if its metadata is in the rule release the run recorded. Runs
+    recorded before releases were tracked fall back to the rule's `created` date: a rule created after the run did
+    not exist on the lab. A benign run is a false-positive opportunity only for the rules deployed at the time."""
+    files = releases(run["rules_release"]) if run.get("rules_release") else None
+    if files is not None:
+        return f"{meta_key}.yml" in files
+    created, started = str(meta.get("created") or ""), str(run.get("started_at") or "")[:10]
+    return bool(created) and bool(started) and created <= started
+
+
+def detection_quality(runs: list[dict], rules_meta: dict | None = None, releases=release_metadata) -> dict:
     """SIEM-layer TP/FP/FN per rule from `run.siem_alerts`, independent of lifecycle state and of the case pipeline.
 
     Runs that were not observed (no `siem_alerts`), failed, or are pipeline-only are not scored but counted.
+    Precision needs false-positive opportunities: `benign_runs` per rule counts the observed benign runs during which
+    the rule was deployed. With none, precision is not measured (None), not 1.0 (lab 2026-10-20: rules deployed an
+    hour earlier showed precision 1.0 with no benign run behind it).
     """
-    states = {str(m.get("wazuh_rule_id") or m.get("rule_id")): m.get("state") for m in (rules_meta or {}).values()}
+    rules_meta = rules_meta or {}
+    states = {str(m.get("wazuh_rule_id") or m.get("rule_id")): m.get("state") for m in rules_meta.values()}
+    keys = {str(m.get("wazuh_rule_id") or m.get("rule_id")): (k, m) for k, m in rules_meta.items()}
     rules: dict[str, dict] = {}
     unobserved = 0
 
     def bucket(rule_id: str) -> dict:
         return rules.setdefault(rule_id, {"state": states.get(rule_id), "tp": 0, "fp": 0, "fn": 0, "unplanned": 0,
-                                          "benign_runs_seen": 0})
+                                          "benign_runs": 0})
 
     benign_runs = 0
     for run in runs:
@@ -261,11 +294,18 @@ def detection_quality(runs: list[dict], rules_meta: dict | None = None) -> dict:
             benign_runs += 1
             for r in alerted - listed:
                 bucket(r)["fp"] += 1
+            for rid, (key, meta) in keys.items():
+                if rid in alerted or rule_was_deployed(key, meta, run, releases):
+                    bucket(rid)["benign_runs"] += 1
     for b in rules.values():
-        b["precision"] = round(b["tp"] / (b["tp"] + b["fp"]), 3) if b["tp"] + b["fp"] else None
+        measured = b["benign_runs"] > 0 and b["tp"] + b["fp"] > 0
+        b["precision"] = round(b["tp"] / (b["tp"] + b["fp"]), 3) if measured else None
         b["recall"] = round(b["tp"] / (b["tp"] + b["fn"]), 3) if b["tp"] + b["fn"] else None
         _with_intervals(b)
-    return {"rules": rules, "benign_runs": benign_runs, "unobserved_runs": unobserved}
+        if not measured:
+            b["precision_ci95"] = None
+    return {"rules": {r: b for r, b in rules.items() if b["tp"] + b["fp"] + b["fn"] + b["unplanned"]},
+            "benign_runs": benign_runs, "unobserved_runs": unobserved}
 
 
 def variant_coverage(runs: list[dict], cases: list[dict], labels: dict, scenarios: dict, art_index: dict) -> dict:
@@ -522,11 +562,13 @@ def render_markdown(m: dict) -> str:
     dq = m["detection_quality"]
     L += ["", f"Tầng phát hiện (alert SIEM, mọi trạng thái vòng đời; {dq['benign_runs']} lượt lành tính, "
               f"{dq['unobserved_runs']} lượt chưa quan sát):", "",
-          "| Rule | Trạng thái | TP | FP | FN | Ngoài dự kiến | Precision | Recall |", "|---|---|---|---|---|---|---|---|"]
+          "| Rule | Trạng thái | TP | FP | FN | Ngoài dự kiến | Lượt lành tính (rule đã deploy) | Precision | Recall |",
+          "|---|---|---|---|---|---|---|---|---|"]
     for rid, b in sorted(dq["rules"].items()):
         prec, rec = _rate(b["precision"], b.get("precision_ci95")), _rate(b["recall"], b.get("recall_ci95"))
+        prec = prec if b["precision"] is not None or not (b["tp"] + b["fp"]) else "chưa đo (0 lượt lành tính)"
         L.append(f"| {rid} | {b['state'] or '?'} | {b['tp']} | {b['fp']} | {b['fn']} | {b['unplanned']} "
-                 f"| {prec} | {rec} |")
+                 f"| {b.get('benign_runs', 0)} | {prec} | {rec} |")
     k = m["pipeline_canary"]
     L += ["", "## Canary pipeline (không tính vào chất lượng rule)", "",
           f"- Rule canary: {', '.join(k['rules']) or '-'}; kỳ vọng {k['expected']}, quan sát {k['observed']} "

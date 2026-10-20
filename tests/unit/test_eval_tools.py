@@ -485,6 +485,29 @@ def test_variant_coverage_counts_public_tests_run_and_detected():
     assert v["index_tests"] == 4 and v["index_techniques"] == 2
 
 
+def test_precision_needs_benign_runs_during_which_the_rule_was_deployed():
+    """Lab 2026-10-20: rules deployed an hour earlier showed precision 1.0 with no benign run behind it."""
+    meta = {"wazuh-100140": {"rule_id": 100140, "state": "shadow", "created": "2026-10-20"},
+            "wazuh-100100": {"rule_id": 100100, "state": "shadow", "created": "2026-10-06"}}
+    releases = {"old": {"wazuh-100100.yml"}, "new": {"wazuh-100100.yml", "wazuh-100140.yml"}}
+    attack = {"run_id": "a", "malicious": True, "rules_release": "new", "started_at": "2026-10-19T18:00:00Z",
+              "expect": [{"source": "wazuh", "rule_id": "100140"}, {"source": "wazuh", "rule_id": "100100"}],
+              "siem_alerts": [{"rule_id": "100140"}, {"rule_id": "100100"}]}
+    benign_old = {"run_id": "b", "malicious": False, "rules_release": "old", "started_at": "2026-10-19T03:00:00Z",
+                  "expect": [], "siem_alerts": []}
+    dq = ev.detection_quality([attack, benign_old], meta, releases=releases.get)["rules"]
+    assert dq["100140"]["benign_runs"] == 0 and dq["100140"]["precision"] is None   # not measured, not 1.0
+    assert dq["100100"]["benign_runs"] == 1 and dq["100100"]["precision"] == 1.0
+    assert dq["100140"]["recall"] == 1.0
+    m = ev.compute_metrics([], [attack, benign_old], meta)
+    m["detection_quality"] = ev.detection_quality([attack, benign_old], meta, releases=releases.get)
+    assert "chưa đo (0 lượt lành tính)" in ev.render_markdown(m)
+    # a run recorded before releases were tracked: the rule's creation date decides
+    legacy = {**benign_old, "rules_release": None, "started_at": "2026-10-21T08:00:00Z"}
+    dq = ev.detection_quality([attack, legacy], meta, releases=releases.get)["rules"]
+    assert dq["100140"]["benign_runs"] == 1 and dq["100140"]["precision"] == 1.0
+
+
 def test_manual_steps_are_read_from_the_case_timeline():
     assert ev.manual_steps({"approved_at": "t1", "restoring_at": "t2"}) == 2
     assert ev.manual_steps({"approved_at": "t1"}) == 1
