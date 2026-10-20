@@ -1,10 +1,10 @@
 name: terraform
 on:
   pull_request:
-    paths: ["infra/**", "statemachine/**", "src/lambdas/**", "wazuh/**", "suricata/**", "scripts/**"]
+    paths: ["infra/**", "statemachine/**", "src/lambdas/**", "agent/**", "wazuh/**", "suricata/**", "scripts/**"]
   push:
     branches: [main]
-    paths: ["infra/**", "statemachine/**", "src/lambdas/**", "wazuh/**", "suricata/**", "scripts/**"]
+    paths: ["infra/**", "statemachine/**", "src/lambdas/**", "agent/**", "wazuh/**", "suricata/**", "scripts/**"]
   workflow_dispatch:
     inputs:
       lab_enabled:
