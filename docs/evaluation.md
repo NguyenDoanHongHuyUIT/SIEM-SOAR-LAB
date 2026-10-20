@@ -24,6 +24,7 @@ python -m evaluation.evaluate --days 30      # giờ lab, chi phí, baseline l�
 | Alert duplication reduction | `1 − cases / Σ alert_count` | case |
 | Rule deployment lead time | `deployed_at − commit_time` | `releases/*/deployment.json` |
 | Robustness under failure | pass-rate của `robust-*` (double click, lỗi giữa chừng, Slack tắt) + kiểm chứng từng bước | run |
+| Case FAILED | từng case kèm lỗi (`failure_error`), nguồn gốc (lỗi robustness cố ý tiêm / lỗi vận hành thật), trạng thái an toàn được giữ và thời điểm khôi phục tay; không in tài nguyên (ID tài nguyên IAM chứa ID access key) | case |
 | Operating cost per session | **thực tế** từ Cost Explorer theo tag `Project=siem-soar-lab` (cần kích hoạt tag trong Billing, dữ liệu trễ ~24 h) và **ước tính** compute từ giá niêm yết của Pricing API × giờ lab đọc từ CloudTrail (RunInstances/StartInstances/StopInstances, gồm cả lần dừng do timer) | CloudTrail, Cost Explorer, Pricing API |
 
 ## Kịch bản: thủ tục công khai, kỹ thuật không gõ tay

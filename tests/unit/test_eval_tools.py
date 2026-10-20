@@ -615,6 +615,31 @@ def test_an_exception_rule_taking_benign_activity_is_reported_not_scored():
     assert "rule ngoại lệ; không tính TP/FP): 100146 (1 lượt)" in ev.render_markdown(m)
 
 
+def test_failed_cases_are_listed_with_their_cause_and_origin():
+    """Lab: 4 FAILED cases. Two were faults the robustness harness injected, one an enrich AccessDenied on an
+    operator's key (fixed by PR #20), one a blocked restore recovered by hand. The report says which is which."""
+    runs = [{"run_id": "run-202610180613-robust-mid-failure-ecd4", "kind": "robustness", "scenario": "robust-mid-failure",
+             "started_at": "2026-10-18T06:13:19Z", "result": {"pass": True, "checks": []}}]
+    cases = [
+        {"case_id": "C-20261018T061319-719748", "status": "FAILED", "source": "wazuh", "rule_id": "100110",
+         "approver": "sim:run-202610180613-robust-mid-failure-ecd4", "failure_error": "InjectedFault",
+         "safe_state": "resource left CONTAINED", "resource_id": "i-06c071a9fc8745d6c"},
+        {"case_id": "C-20261018T063359-0d4ca1", "status": "FAILED", "source": "guardduty",
+         "rule_id": "Stealth:IAMUser/CloudTrailLoggingDisabled", "failure_error": "ClientError",
+         "safe_state": "no containment change was applied", "resource_id": "Huy/AKIAEXAMPLEEXAMPLE"},
+        {"case_id": "C-20261019T043905-0eb8db", "status": "FAILED", "source": "wazuh", "rule_id": "100110",
+         "approver": "slack:U0C9ZJ8BFLN", "failure_error": "RestoreBlocked", "safe_state": "resource left CONTAINED",
+         "manual_recovery_at": "2026-10-19T04:56:47.029Z"},
+        {"case_id": "C-ok", "status": "RESTORED", "source": "wazuh", "rule_id": "100110"}]
+    f = ev.failed_cases(cases, runs)
+    assert [x["origin"] for x in f] == ["robustness", "operational", "operational"]
+    assert f[2]["manual_recovery_at"] == "2026-10-19T04:56:47.029Z"
+    m = ev.compute_metrics(cases, runs, {})
+    md = ev.render_markdown(m)
+    assert "## Case FAILED" in md and "lỗi do kiểm thử robustness cố ý tiêm" in md and "khôi phục tay: không ghi nhận" in md
+    assert "AKIA" not in md                                          # an IAM resource id is never printed
+
+
 def test_manual_steps_are_read_from_the_case_timeline():
     assert ev.manual_steps({"approved_at": "t1", "restoring_at": "t2"}) == 2
     assert ev.manual_steps({"approved_at": "t1"}) == 1
