@@ -274,6 +274,9 @@ def detection_quality(runs: list[dict], rules_meta: dict | None = None, releases
                                           "benign_runs": 0})
 
     benign_runs = 0
+    # alerts a benign run declares as its correct outcome (not false_positive): an exception rule taking the benign
+    # activity (100112 service account, 100146 package manager). Neither TP nor FP, but the evidence that it works.
+    benign_expected: dict[str, int] = {}
     for run in runs:
         if run.get("kind") == "robustness" or run.get("evaluation_scope") == "pipeline_only" or execution_failed(run):
             continue
@@ -294,6 +297,8 @@ def detection_quality(runs: list[dict], rules_meta: dict | None = None, releases
             benign_runs += 1
             for r in alerted - listed:
                 bucket(r)["fp"] += 1
+            for r in alerted & listed:
+                benign_expected[r] = benign_expected.get(r, 0) + 1
             for rid, (key, meta) in keys.items():
                 if rid in alerted or rule_was_deployed(key, meta, run, releases):
                     bucket(rid)["benign_runs"] += 1
@@ -305,7 +310,8 @@ def detection_quality(runs: list[dict], rules_meta: dict | None = None, releases
         if not measured:
             b["precision_ci95"] = None
     return {"rules": {r: b for r, b in rules.items() if b["tp"] + b["fp"] + b["fn"] + b["unplanned"]},
-            "benign_runs": benign_runs, "unobserved_runs": unobserved}
+            "benign_runs": benign_runs, "unobserved_runs": unobserved,
+            "benign_expected": dict(sorted(benign_expected.items()))}
 
 
 def variant_coverage(runs: list[dict], cases: list[dict], labels: dict, scenarios: dict, art_index: dict) -> dict:
@@ -569,6 +575,9 @@ def render_markdown(m: dict) -> str:
         prec = prec if b["precision"] is not None or not (b["tp"] + b["fp"]) else "chưa đo (0 lượt lành tính)"
         L.append(f"| {rid} | {b['state'] or '?'} | {b['tp']} | {b['fp']} | {b['fn']} | {b['unplanned']} "
                  f"| {b.get('benign_runs', 0)} | {prec} | {rec} |")
+    if dq.get("benign_expected"):
+        L += ["", "Hoạt động lành tính được rule nhận đúng như kịch bản khai báo (rule ngoại lệ; không tính TP/FP): "
+              + ", ".join(f"{rid} ({n} lượt)" for rid, n in dq["benign_expected"].items())]
     k = m["pipeline_canary"]
     L += ["", "## Canary pipeline (không tính vào chất lượng rule)", "",
           f"- Rule canary: {', '.join(k['rules']) or '-'}; kỳ vọng {k['expected']}, quan sát {k['observed']} "
