@@ -297,7 +297,7 @@ def test_fim_watches_directories_not_files():
     # Wazuh's OS_XML parser rejects a line break inside a tag ("Error reading XML file etc/ossec.conf"): one line each
     assert not re.search(r"<[^>]*\n[^>]*>", re.sub(r"<!--.*?-->", "", xml, flags=re.S)), "line break inside a tag"
     for attrs, paths in re.findall(r"<directories([^>]*)>([^<]+)</directories>", xml):
-        if 'realtime="yes"' in attrs:
+        if 'realtime="yes"' in attrs or 'whodata="yes"' in attrs:
             for path in paths.split(","):
                 assert not re.search(r"/(passwd|shadow|sudoers|sshd_config|authorized_keys)$", path.strip()), path
 

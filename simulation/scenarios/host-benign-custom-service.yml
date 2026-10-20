@@ -1,0 +1,17 @@
+id: host-benign-custom-service
+title: Benign - an administrator adds a custom systemd service in /etc/systemd/system
+kind: ssm_shell
+target: sensor
+malicious: false
+commands:
+  # the documented place for local units (systemd.unit(5): /etc/systemd/system holds "System units created by the
+  # administrator"); the same directory as rule 100141's Atomic T1543.002 evidence
+  - 'printf "[Unit]\nDescription=SIEMSOAR benign {short}\n[Service]\nType=oneshot\nExecStart=/bin/true\n" > /etc/systemd/system/siemsoar-benign-{short}.service'
+  - 'systemctl daemon-reload'
+  - 'systemctl start siemsoar-benign-{short}.service'
+cleanup:
+  - 'rm -f /etc/systemd/system/siemsoar-benign-{short}.service'
+  - 'systemctl daemon-reload'
+expect: []                # nothing declared: every SIEMSOAR alert in this run is a false positive
+settle_seconds: 120
+notes: False-positive measurement for 100141. Authored benign activity, not a public procedure.
