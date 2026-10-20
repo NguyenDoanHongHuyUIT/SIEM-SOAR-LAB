@@ -164,7 +164,7 @@
   <rule id="100145" level="10">
     <if_sid>80784</if_sid>
     <field name="audit.file.name" type="pcre2">^/etc/g?shadow$</field>
-    <field name="audit.exe" type="pcre2" negate="yes">^(/var/ossec/bin/wazuh-(modulesd|syscheckd)|/usr/bin/sudo|/usr/sbin/cron|/usr/bin/passwd)$</field>
+    <field name="audit.exe" type="pcre2" negate="yes">^(/var/ossec/bin/wazuh-(modulesd|syscheckd)|/usr/bin/sudo|/usr/sbin/cron|/usr/bin/passwd|/usr/sbin/user(add|del))$</field>
     <description>SIEMSOAR: credential store read by a program that normally does not read it</description>
     <mitre>
       <id>T1003.008</id>

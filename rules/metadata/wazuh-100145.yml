@@ -17,11 +17,15 @@ created: 2026-10-20
 data_source: Linux audit (read watch on /etc/shadow, /etc/gshadow) via Wazuh rule 80784
 description: >
   /etc/shadow or /etc/gshadow read by a program other than the ones observed reading it in normal operation on
-  the three lab hosts since auditd was enabled (2026-10-19): wazuh-modulesd, wazuh-syscheckd, sudo, cron, passwd.
+  the three lab hosts since auditd was enabled (2026-10-19): wazuh-modulesd, wazuh-syscheckd, sudo, cron, passwd;
+  and, from the benign runs of 2026-10-20, the account tools useradd and userdel (their job is to read it).
   Observed attack: cat /etc/shadow (Atomic T1003.008 #1).
 expected_fp: >
-  Authentication programs not seen on the lab yet (e.g. sshd or unix_chkpwd during password logins): to be
-  measured in shadow and added to the list from recorded events only.
+  Measured on the lab (2026-10-20, rule as deployed in a3e888c): 2 false positives in 4 benign runs. useradd/userdel
+  reading the stores (benign service-account scenario) are now excluded; perl run by package management
+  (dpkg-preconfigure / debconf during apt install, benign maintenance scenario) is not, because excluding an
+  interpreter would also excuse an attacker's perl. Re-measure on new benign runs: these exclusions come from the
+  same data the false positives were found in.
 tests:
   - name: cat /etc/shadow (Atomic T1003.008 #1, recorded on the lab)
     expect: match
@@ -38,3 +42,18 @@ tests:
     log_format: audit
     location: /var/log/audit/audit.log
     log: "type=SYSCALL msg=audit(1792408621.739:1690): arch=c000003e syscall=257 success=yes exit=7 a0=ffffff9c a1=788779ddc2dd a2=80000 a3=0 items=1 ppid=383 pid=3749 auid=4294967295 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=(none) ses=4294967295 comm=\"cron\" exe=\"/usr/sbin/cron\" subj=unconfined key=\"audit-wazuh-r\"\u001dARCH=x86_64 SYSCALL=openat AUID=\"unset\" UID=\"root\" GID=\"root\" EUID=\"root\" SUID=\"root\" FSUID=\"root\" EGID=\"root\" SGID=\"root\" FSGID=\"root\" type=CWD msg=audit(1792408621.739:1690): cwd=\"/var/spool/cron\" type=PATH msg=audit(1792408621.739:1690): item=0 name=\"/etc/shadow\" inode=16000 dev=103:01 mode=0100640 ouid=0 ogid=42 rdev=00:00 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0\u001dOUID=\"root\" OGID=\"shadow\" type=PROCTITLE msg=audit(1792408621.739:1690): proctitle=2F7573722F7362696E2F43524F4E002D66002D50"
+  - name: useradd reading /etc/gshadow (benign service-account run, recorded on the lab)
+    expect: no_match
+    log_format: audit
+    location: /var/log/audit/audit.log
+    log: "type=SYSCALL msg=audit(1792461574.311:2990): arch=c000003e syscall=257 success=yes exit=7 a0=ffffff9c a1=59327bed3820 a2=20902 a3=0 items=1 ppid=2696 pid=2697 auid=4294967295 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=(none) ses=4294967295 comm=\"useradd\" exe=\"/usr/sbin/useradd\" subj=snap.amazon-ssm-agent.amazon-ssm-agent key=\"audit-wazuh-r\"\u001dARCH=x86_64 SYSCALL=openat AUID=\"unset\" UID=\"root\" GID=\"root\" EUID=\"root\" SUID=\"root\" FSUID=\"root\" EGID=\"root\" SGID=\"root\" FSGID=\"root\" type=CWD msg=audit(1792461574.311:2990): cwd=\"/var/snap/amazon-ssm-agent/13349\" type=PATH msg=audit(1792461574.311:2990): item=0 name=\"/etc/gshadow\" inode=3067 dev=103:01 mode=0100640 ouid=0 ogid=42 rdev=00:00 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0\u001dOUID=\"root\" OGID=\"shadow\" type=PROCTITLE msg=audit(1792461574.311:2990): proctitle=75736572616464002D2D73797374656D002D2D6E6F2D6372656174652D686F6D65002D2D7368656C6C002F7573722F7362696E2F6E6F6C6F67696E007369656D736F61725F7376635F38313737"
+  - name: userdel reading /etc/shadow (benign service-account cleanup, recorded on the lab)
+    expect: no_match
+    log_format: audit
+    location: /var/log/audit/audit.log
+    log: "type=SYSCALL msg=audit(1792461575.382:3006): arch=c000003e syscall=257 success=yes exit=6 a0=ffffff9c a1=58fd28d0d0e0 a2=20902 a3=0 items=1 ppid=2715 pid=2716 auid=4294967295 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=(none) ses=4294967295 comm=\"userdel\" exe=\"/usr/sbin/userdel\" subj=snap.amazon-ssm-agent.amazon-ssm-agent key=\"audit-wazuh-r\"\u001dARCH=x86_64 SYSCALL=openat AUID=\"unset\" UID=\"root\" GID=\"root\" EUID=\"root\" SUID=\"root\" FSUID=\"root\" EGID=\"root\" SGID=\"root\" FSGID=\"root\" type=CWD msg=audit(1792461575.382:3006): cwd=\"/var/snap/amazon-ssm-agent/13349\" type=PATH msg=audit(1792461575.382:3006): item=0 name=\"/etc/shadow\" inode=3177 dev=103:01 mode=0100640 ouid=0 ogid=42 rdev=00:00 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0\u001dOUID=\"root\" OGID=\"shadow\" type=PROCTITLE msg=audit(1792461575.382:3006): proctitle=7573657264656C007369656D736F61725F7376635F38313737"
+  - name: perl run by apt (dpkg-preconfigure) reading /etc/shadow - a measured, accepted false positive
+    expect: match
+    log_format: audit
+    location: /var/log/audit/audit.log
+    log: "type=SYSCALL msg=audit(1792461416.350:1735): arch=c000003e syscall=257 success=yes exit=4 a0=ffffff9c a1=7201c8bdc2dd a2=80000 a3=0 items=1 ppid=1727 pid=1728 auid=4294967295 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=(none) ses=4294967295 comm=\"dpkg-preconfigu\" exe=\"/usr/bin/perl\" subj=snap.amazon-ssm-agent.amazon-ssm-agent key=\"audit-wazuh-r\"\u001dARCH=x86_64 SYSCALL=openat AUID=\"unset\" UID=\"root\" GID=\"root\" EUID=\"root\" SUID=\"root\" FSUID=\"root\" EGID=\"root\" SGID=\"root\" FSGID=\"root\" type=CWD msg=audit(1792461416.350:1735): cwd=\"/var/snap/amazon-ssm-agent/13349\" type=PATH msg=audit(1792461416.350:1735): item=0 name=\"/etc/shadow\" inode=3058 dev=103:01 mode=0100640 ouid=0 ogid=42 rdev=00:00 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0\u001dOUID=\"root\" OGID=\"shadow\" type=PROCTITLE msg=audit(1792461416.350:1735): proctitle=2F7573722F62696E2F7065726C002D77002F7573722F7362696E2F64706B672D707265636F6E666967757265002D2D617074"
