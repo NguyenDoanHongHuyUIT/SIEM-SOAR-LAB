@@ -14,7 +14,7 @@
 | Nguồn | Máy | Cấu hình | Alert |
 |---|---|---|---|
 | syslog / auth.log | mọi máy | mặc định của Wazuh Agent (không khai lại để tránh đọc trùng) | rule chính thức (5902, 5710/5712, 5763, …) → rule SIEMSOAR bọc |
-| FIM (real-time, theo thư mục + `restrict`) | mọi máy | `agent/ossec_agent_additions.xml`: `/etc/passwd`, `shadow`, `sudoers`, `sshd_config`, `authorized_keys`, cron, systemd, profile/bashrc, thư mục canary | 550/554 → rule SIEMSOAR |
+| FIM (theo thư mục + `restrict`; **who-data** trên file tài khoản và vị trí persistence: alert ghi cả tiến trình đã ghi file) | mọi máy | `agent/ossec_agent_additions.xml`: `/etc/passwd`, `shadow`, `sudoers`, `sshd_config`, `authorized_keys`, cron, systemd, profile/bashrc, thư mục canary | 550/554 → rule SIEMSOAR |
 | auditd | mọi máy | `agent/siemsoar.rules`: `execve` theo euid 0 (b64/b32), đọc `/etc/shadow`, `/etc/gshadow`; key theo danh sách `audit-keys` của Wazuh | rule chính thức 80780–80792 (80792 "Audit: Command") |
 | Suricata EVE | sensor | `suricata/ossec_eve_localfile.xml` | 86601 → rule ánh xạ SIEMSOAR (110101–110103) |
 

@@ -1,0 +1,23 @@
+id: host-benign-file-housekeeping
+title: Benign - file housekeeping and permissions (chmod, sticky and setgid directories, truncating and removing logs)
+kind: ssm_shell
+target: sensor
+malicious: false
+commands:
+  - 'mkdir -p /var/tmp/siemsoar-{short}/logs /var/tmp/siemsoar-{short}/drop /var/tmp/siemsoar-{short}/shared'
+  - 'echo data > /var/tmp/siemsoar-{short}/logs/app.log && echo old > /var/tmp/siemsoar-{short}/logs/app.log.1'
+  # everyday permission changes: none sets SetUID/SetGID on a file
+  - 'chmod 755 /var/tmp/siemsoar-{short} && chmod g+w /var/tmp/siemsoar-{short}/logs && chmod -R a+rX /var/tmp/siemsoar-{short}/logs'
+  - 'chmod 1777 /var/tmp/siemsoar-{short}/drop'              # sticky bit, like /tmp
+  # a group-shared directory: setgid on a DIRECTORY makes new files inherit the group (chmod(1), "SETUID AND SETGID
+  # BITS"); a standard administrator practice, and the same chmod as an escalation would use
+  - 'chmod 2775 /var/tmp/siemsoar-{short}/shared'
+  # log housekeeping: the same commands T1070.003 uses, on files that are not shell history
+  - 'truncate -s0 /var/tmp/siemsoar-{short}/logs/app.log && rm -f /var/tmp/siemsoar-{short}/logs/app.log.1'
+cleanup:
+  - 'rm -rf /var/tmp/siemsoar-{short}'
+expect: []                # nothing declared: every SIEMSOAR alert in this run is a false positive
+settle_seconds: 120
+notes: >
+  False-positive measurement for 100143 (rm/truncate) and 100144 (chmod): the benign runs so far never ran these
+  commands, so "no false positive" meant nothing. Authored benign activity, not a public procedure.
