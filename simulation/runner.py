@@ -251,7 +251,8 @@ class Runner:
             run["superseded_results"] = [*run.get("superseded_results", []),
                                          {"reobserved_at": run["reobserved_at"], "result": run.pop("result"),
                                           "siem_alerts": run.pop("siem_alerts", None),
-                                          "observed": run.pop("observed", None)}]
+                                          "observed": run.pop("observed", None),
+                                          "observation_error": run.pop("observation_error", None)}]
         s = {**load_scenarios().get(run["scenario"], {}), "expect": run.get("expect", [])}
         run["reobserved_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")[:-4] + "Z"
         return self.conclude(run, s, self.store.list_cases(), day=run["started_at"][:10])
