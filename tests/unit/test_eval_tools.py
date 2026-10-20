@@ -598,6 +598,23 @@ def test_precision_needs_benign_runs_during_which_the_rule_was_deployed():
     assert dq["100140"]["benign_runs"] == 1 and dq["100140"]["precision"] == 1.0
 
 
+def test_an_exception_rule_taking_benign_activity_is_reported_not_scored():
+    """Lab 2026-10-20: apt writing /etc/cron.d/sysstat went to the who-data exception 100146 (declared by the benign
+    scenario) while 100142 and 100145 stayed declared false positives. 100146 is neither TP nor FP, but shown."""
+    run = {"run_id": "run-202610200729-host-benign-admin-maintenance-7b5b", "malicious": False,
+           "rules_release": "067e5a2", "started_at": "2026-10-20T07:29:40Z",
+           "expect": [{"source": "wazuh", "rule_id": "100146", "case": False},
+                      {"source": "wazuh", "rule_id": "100142", "case": False, "false_positive": True},
+                      {"source": "wazuh", "rule_id": "100145", "case": False, "false_positive": True, "optional": True}],
+           "siem_alerts": [{"rule_id": "100146"}, {"rule_id": "100146"}, {"rule_id": "100142"}, {"rule_id": "100145"}]}
+    dq = ev.detection_quality([run], {}, releases=lambda sha: None)
+    assert dq["benign_expected"] == {"100146": 1}
+    assert "100146" not in dq["rules"] and dq["rules"]["100142"]["fp"] == 1 and dq["rules"]["100145"]["fp"] == 1
+    m = ev.compute_metrics([], [run], {})
+    m["detection_quality"] = dq
+    assert "rule ngoại lệ; không tính TP/FP): 100146 (1 lượt)" in ev.render_markdown(m)
+
+
 def test_manual_steps_are_read_from_the_case_timeline():
     assert ev.manual_steps({"approved_at": "t1", "restoring_at": "t2"}) == 2
     assert ev.manual_steps({"approved_at": "t1"}) == 1
