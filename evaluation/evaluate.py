@@ -432,6 +432,24 @@ def in_scope(cases: list[dict], runs: list[dict], since: str | None) -> tuple[li
     return keep_c, keep_r
 
 
+def failed_cases(cases: list[dict], runs: list[dict]) -> list[dict]:
+    """Every case that ended FAILED, with its cause, so a count in the report is never read without one: a fault the
+    robustness harness injected on purpose (approver sim:<robustness run>, InjectedFault) is not an operational
+    failure. The resource is not listed (an IAM resource id holds the access key id)."""
+    kinds = {r["run_id"]: r.get("kind") for r in runs}
+    out = []
+    for c in sorted((c for c in cases if c.get("status") == "FAILED"), key=lambda c: c["case_id"]):
+        actor = str(c.get("approver") or "")
+        run_id = actor[4:] if actor.startswith("sim:") else None
+        injected = c.get("failure_error") == "InjectedFault"
+        origin = ("robustness" if kinds.get(run_id) == "robustness" or injected else
+                  "simulation" if run_id else "operational")
+        out.append({"case_id": c["case_id"], "source": c.get("source"), "rule_id": c.get("rule_id"),
+                    "error": c.get("failure_error"), "origin": origin, "run": run_id,
+                    "safe_state": c.get("safe_state"), "manual_recovery_at": c.get("manual_recovery_at")})
+    return out
+
+
 def compute_metrics(cases: list[dict], runs: list[dict], rules_meta: dict | None = None,
                     baseline: list[dict] | None = None, deployments: list[dict] | None = None,
                     cost: dict | None = None, scenarios: dict | None = None, art_index: dict | None = None) -> dict:
@@ -491,6 +509,7 @@ def compute_metrics(cases: list[dict], runs: list[dict], rules_meta: dict | None
         "rule_deployment_lead_time_s": summary(lead),
         # a run the harness could not carry out (e.g. its own setup error) tested nothing: listed, not scored
         "window_headroom": window_headroom(cases, runs),
+        "failed_cases": failed_cases(cases, runs),
         "robustness": {"runs": sum(1 for r in robustness if not execution_failed(r)),
                        "passed": sum(1 for r in robustness if r.get("result", {}).get("pass")),
                        "not_executed": sum(1 for r in robustness if execution_failed(r)),
@@ -620,6 +639,15 @@ def render_markdown(m: dict) -> str:
     for r in m["robustness"]["detail"]:
         verdict = ("PASS" if r["pass"] else "FAIL") if r.get("executed", True) else "không thực thi (lỗi công cụ)"
         L.append(f"  - {r['scenario']} ({r['run']}): {verdict}")
+    failed = m.get("failed_cases") or []
+    if failed:
+        origin = {"robustness": "lỗi do kiểm thử robustness cố ý tiêm", "simulation": "trong lượt mô phỏng",
+                  "operational": "lỗi vận hành thật"}
+        L += ["", "## Case FAILED (dừng ở trạng thái an toàn)", ""]
+        for f in failed:
+            L.append(f"- {f['case_id']} · {f['source']} {f['rule_id']} · {f['error']} · {origin[f['origin']]}"
+                     + (f" ({f['run']})" if f["run"] else "") + f" · trạng thái giữ lại: {f['safe_state']}"
+                     + f" · khôi phục tay: {f['manual_recovery_at'] or 'không ghi nhận'}")
     L += ["", "## Chi phí vận hành mỗi phiên", ""] + _render_cost(m["operating_cost"]) + [
         "", "## So sánh baseline (GuardDuty email + cách ly thủ công)", ""]
     b = m["baseline_comparison"]
