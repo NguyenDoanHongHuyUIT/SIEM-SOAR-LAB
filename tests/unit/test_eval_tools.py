@@ -219,6 +219,48 @@ def test_observe_alerts_filters_on_the_manager_and_validates_the_agent():
         oa.summary_command('i-1" or true', datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 1, tzinfo=UTC))
 
 
+def test_a_run_is_reobserved_from_the_alert_log_including_the_rotated_archive(monkeypatch):
+    """Lab 2026-10-19/20: the operator's session ended while runs waited; their alerts were in the manager's log."""
+    from types import SimpleNamespace
+    cmd = runner.siem_alerts_command("i-06c071a9fc8745d6c", "2026-10-19")
+    assert "/var/ossec/logs/alerts/2026/Oct/ossec-alerts-19.json.gz" in cmd and cmd.startswith("zcat -f ")
+    with pytest.raises(ValueError, match="not a date"):
+        runner.siem_alerts_command("i-06c071a9fc8745d6c", "19/10; rm -rf /")
+
+    stored = {}
+    run = {"run_id": "run-202610191817-host-read-shadow-19ff", "scenario": "host-read-shadow", "malicious": True,
+           "started_at": "2026-10-19T18:17:33Z", "ended_at": "2026-10-19T18:17:48Z", "settle_seconds": 120,
+           "target": "i-06c071a9fc8745d6c", "expect": [{"source": "wazuh", "rule_id": "100145", "case": False}]}
+    r = object.__new__(runner.Runner)
+    r.log = lambda m: None
+    r.store = SimpleNamespace(list_runs=lambda: [dict(run)], list_cases=lambda: [],
+                              put_run=lambda x: stored.update(x))
+    days = []
+    r.siem_alerts = lambda rr, day=None: days.append(day) or [{"rule_id": "100145", "timestamp": "2026-10-19T18:17:50Z"}]
+    out = r.reobserve(run["run_id"])
+    assert days == ["2026-10-19"] and out["result"]["pass"] and out["observed"] == {"wazuh:100145": True}
+    assert stored["reobserved_at"]
+    r.store = SimpleNamespace(list_runs=lambda: [{**run, "result": {"pass": True}}])
+    with pytest.raises(ValueError, match="already has a verdict"):
+        r.reobserve(run["run_id"])
+
+
+def test_a_failed_siem_read_is_recorded_not_fatal():
+    from types import SimpleNamespace
+    r = object.__new__(runner.Runner)
+    stored = {}
+    r.store = SimpleNamespace(put_run=lambda x: stored.update(x))
+
+    def down(run, day=None):
+        raise RuntimeError("no running instance with siemsoar:role=wazuh-manager; start the lab: soarctl lab up")
+    r.siem_alerts = down
+    run = {"run_id": "run-x", "malicious": False, "started_at": "2026-10-19T07:43:44Z",
+           "ended_at": "2026-10-19T07:43:54Z", "settle_seconds": 120, "target": "i-06c071a9fc8745d6c"}
+    out = r.conclude(run, {"expect": []}, [])
+    assert "siem_alerts" not in out and "start the lab" in out["observation_error"]
+    assert out["result"]["pass"] is False and stored["run_id"] == "run-x"   # recorded, and counted as unobserved
+
+
 def test_a_cloud_target_has_no_siem_layer_to_read():
     r = object.__new__(runner.Runner)
     r.ssm_run = lambda *a, **k: pytest.fail("no Wazuh query for an IAM key target")
