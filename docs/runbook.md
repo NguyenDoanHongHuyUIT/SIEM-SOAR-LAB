@@ -50,7 +50,9 @@ python -m tools.soarctl lab status | extend --hours 2 | down
 Kết thúc phiên: `python -m tools.soarctl lab down` (stop máy, hủy timer; dữ liệu Wazuh giữ nguyên) — hoặc timer tự stop.
 `lab-session → down` **hủy hẳn** mặt phẳng lab (manager và dữ liệu Wazuh): chỉ dùng khi kết thúc đồ án.
 Sau khi đổi `agent/` (cấu hình FIM, auditd): merge → `terraform` apply (đưa file lên bucket bootstrap) →
-`python -m tools.labctl refresh-agents` (áp lên sensor và máy mục tiêu đang chạy).
+`python -m tools.labctl refresh-agents` (áp lên sensor và máy mục tiêu đang chạy). Script cài agent **tự kiểm** ở
+cuối: kernel audit phải bật (`auditctl -s` → `enabled 1`) và engine who-data phải chạy (`(6019)` trong `ossec.log`);
+nếu không, lệnh trên máy đó kết thúc **Failed** (không còn báo Success khi syscheckd đã lùi về real-time).
 
 ## 5. Chạy lần đầu an toàn (checklist)
 Mọi rule vào repo ở **shadow** (đề cương 5.3: rule mới chỉ ghi nhận alert, không tạo case). Vì vậy phiên đầu là phiên **đo**:

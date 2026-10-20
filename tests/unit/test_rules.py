@@ -318,6 +318,21 @@ def test_audit_rules_follow_the_wazuh_documented_forms():
     assert "<log_format>audit</log_format>" in xml and "<location>/var/log/audit/audit.log</location>" in xml
 
 
+def test_agent_install_keeps_kernel_auditing_on_and_fails_when_who_data_does_not_start():
+    """Lab 2026-10-20: unattended-upgrade upgraded systemd, journald restarted with Ubuntu's Audit=no and turned kernel
+    auditing off on both targets (audit_enabled=0 by systemd-journald, 07:11:19); the next refresh reported Success
+    while syscheckd had switched who-data to real-time (6913)."""
+    sh = (ROOT / "agent/install_wazuh_agent.sh").read_text()
+    assert "printf '[Journal]\\nAudit=yes\\n' > /etc/systemd/journald.conf.d/60-siemsoar-audit.conf" in sh
+    assert sh.index("Audit=yes") < sh.index("apt-get install -y auditd")      # before auditd, which enables auditing
+    assert 'APT::Periodic::Unattended-Upgrade "0";' in sh and "disable --now apt-daily-upgrade.timer" in sh
+    assert "logcollector.queue_size=16384" in sh
+    tail = sh[sh.index("systemctl restart wazuh-agent"):]
+    assert "grep -q '^enabled 1'" in tail and 'grep -q "(6019)"' in tail and tail.count("exit 1") == 2
+    mgr = (ROOT / "wazuh/bootstrap_manager.sh").read_text()
+    assert 'APT::Periodic::Unattended-Upgrade "0";' in mgr
+
+
 def test_eve_input_drops_suricata_stats_events_only():
     """Lab 2026-10-17..20: EVE stats events (462 fields) overflowed Wazuh's 256-field JSON decoder ~1,400 times a
     minute. The agent drops them (<ignore>, documented localfile option); alerts and protocol events still go through.
