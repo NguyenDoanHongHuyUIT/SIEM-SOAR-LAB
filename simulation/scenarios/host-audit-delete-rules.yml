@@ -1,0 +1,23 @@
+id: host-audit-delete-rules
+title: Defense impairment - delete every audit rule with auditctl (Atomic Red Team T1685.004 test 1)
+kind: atomic
+target: sensor
+malicious: true
+atomic:
+  technique: T1685.004
+  test_guid: 33a29ab1-cabb-407f-9448-269041bf2856
+  ref: 388942adbd9641f4dfdcf079d7efe9a75ec0ac43
+  timeout: 120
+verify:
+  - 'test "$(auditctl -l | grep -c audit-wazuh)" = 0'     # the project's rules are gone (syscheckd re-adds only its own)
+cleanup:
+  # ART's cleanup is `service auditd restart`; then the same checks as host-audit-disable
+  - 'auditctl -e 1'
+  - 'augenrules --load'
+  - 'sleep 10; auditctl -l | grep -q wazuh_fim || systemctl restart wazuh-agent'
+  - 'test "$(auditctl -l | grep -c audit-wazuh)" -ge 4'
+expect: []                # observation run; benign `augenrules --load` (every agent refresh) also removes all rules first
+settle_seconds: 120
+notes: >
+  Observation of T1685.004 #1. The same CONFIG_CHANGE remove_rule records come from a benign rule reload
+  (augenrules --load on every agent refresh, lab 2026-10-20 07:43), so a rule must separate the two from evidence.
