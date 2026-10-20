@@ -19,7 +19,9 @@ description: >
   A file under the cron directories was added or changed. Observed on the lab: FIM 554 on
   /etc/cron.d/persistevil and /var/spool/cron/crontabs/persistevil (Atomic T1053.003 #3, #4).
 expected_fp: >
-  Package installs and updates that ship cron jobs, an administrator editing a crontab.
+  Measured on the lab (2026-10-20, rule as in a3e888c): 1 false positive in 4 benign runs, apt installing
+  sysstat (/etc/cron.d/sysstat and its .dpkg-new temporary file). FIM does not record which process wrote the
+  file; Wazuh's who-data FIM mode (auditd) would, so package-manager writes could be told apart.
 tests:
   - name: cron.d entry added (Atomic T1053.003 #3 on the lab)
     expect: match
