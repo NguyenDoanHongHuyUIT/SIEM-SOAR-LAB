@@ -318,6 +318,23 @@ def test_audit_rules_follow_the_wazuh_documented_forms():
     assert "<log_format>audit</log_format>" in xml and "<location>/var/log/audit/audit.log</location>" in xml
 
 
+def test_eve_input_drops_suricata_stats_events_only():
+    """Lab 2026-10-17..20: EVE stats events (462 fields) overflowed Wazuh's 256-field JSON decoder ~1,400 times a
+    minute. The agent drops them (<ignore>, documented localfile option); alerts and protocol events still go through.
+    Line prefixes as written by Suricata 7.0.17 on the lab sensor."""
+    import re
+    xml = (ROOT / "suricata/ossec_eve_localfile.xml").read_text()
+    assert not re.search(r"<[^>]*\n[^>]*>", re.sub(r"<!--.*?-->", "", xml, flags=re.S)), "line break inside a tag"
+    ignores = re.findall(r'<ignore type="PCRE2">([^<]+)</ignore>', xml)
+    assert len(ignores) == 1
+    pattern = re.compile(ignores[0])
+    stats = '{"timestamp":"2026-10-17T16:34:18.856971+0000","event_type":"stats","stats":{"uptime":40,"'
+    alert = ('{"timestamp":"2026-10-17T16:46:09.199109+0000","flow_id":562241518942996,"in_iface":"ens5",'
+             '"event_type":"alert","src_ip":"10.42.0.91"')
+    assert pattern.search(stats)
+    assert not pattern.search(alert)
+
+
 # ------------------------------------------------------------------ rule files
 def test_duplicate_ids_rejected():
     with pytest.raises(ValueError):

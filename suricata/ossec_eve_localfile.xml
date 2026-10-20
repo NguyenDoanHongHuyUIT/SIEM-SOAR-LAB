@@ -4,6 +4,11 @@
   <localfile>
     <log_format>json</log_format>
     <location>/var/log/suricata/eve.json</location>
+    <!-- Suricata "stats" events (every 8 s) carry 462 counters; Wazuh's JSON decoder stops at 256 fields
+         (analysisd.decoder_order_size) and logged "Too many fields for JSON decoder" about 1,400 times a minute
+         (lab 2026-10-17..20, 1.74 million lines). No Wazuh Suricata rule reads them (0475-suricata_rules.xml:
+         alert, http, dns, tls) and Suricata still writes the counters to stats.log. -->
+    <ignore type="PCRE2">^\{"timestamp":"[^"]+","event_type":"stats"</ignore>
   </localfile>
 </ossec_config>
 <!-- END SIEMSOAR -->
