@@ -16,7 +16,7 @@
 | syslog / auth.log | mọi máy | mặc định của Wazuh Agent (không khai lại để tránh đọc trùng) | rule chính thức (5902, 5710/5712, 5763, …) → rule SIEMSOAR bọc |
 | FIM (theo thư mục + `restrict`; **who-data** trên file tài khoản và vị trí persistence: alert ghi cả tiến trình đã ghi file) | mọi máy | `agent/ossec_agent_additions.xml`: `/etc/passwd`, `shadow`, `sudoers`, `sshd_config`, `authorized_keys`, cron, systemd, profile/bashrc, thư mục canary | 550/554 → rule SIEMSOAR |
 | auditd | mọi máy | `agent/siemsoar.rules`: `execve` theo euid 0 (b64/b32), đọc `/etc/shadow`, `/etc/gshadow`; key theo danh sách `audit-keys` của Wazuh | rule chính thức 80780–80792 (80792 "Audit: Command") |
-| Suricata EVE | sensor | `suricata/ossec_eve_localfile.xml` | 86601 → rule ánh xạ SIEMSOAR (110101–110103) |
+| Suricata EVE (bỏ sự kiện `stats`: 462 trường, vượt giới hạn 256 trường của bộ giải mã JSON Wazuh; số đếm vẫn ở `stats.log`) | sensor | `suricata/ossec_eve_localfile.xml` | 86601 → rule ánh xạ SIEMSOAR (110101–110103) |
 
 Cấu hình agent đổi trong repo đến máy đang chạy bằng `labctl refresh-agents` (cùng script cài đặt, idempotent; không
 chạm manager). Bootstrap chỉ chạy lúc khởi động lần đầu.
