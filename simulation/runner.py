@@ -86,7 +86,9 @@ def siem_alerts_command(agent: str, day: str | None = None) -> str:
 
     alerts.json is where Wazuh records an alert whatever the rule's lifecycle state is, so this sees shadow rules too.
     With `day` (YYYY-MM-DD, a run re-observed later), that day's rotated archive is read as well: Wazuh moves the
-    alerts of each day to logs/alerts/<year>/<Mon>/ossec-alerts-<dd>.json.gz.
+    alerts of each day to logs/alerts/<year>/<Mon>/ossec-alerts-<dd>.json, gzipped by monitord at day change when it
+    runs then (monitord.compress). Lab 2026-10-20: the manager was stopped at midnight and the archives stayed plain
+    .json, so both names are read. Today's archive is a hard link to alerts.json (`-ef`): read once, not twice.
     The agent name (= EC2 instance id) is validated because it ends up inside a shell command.
     """
     if not INSTANCE_RE.fullmatch(agent):
@@ -96,8 +98,11 @@ def siem_alerts_command(agent: str, day: str | None = None) -> str:
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
             raise ValueError(f"not a date: {day!r}")
         when = datetime.strptime(day, "%Y-%m-%d")
-        archive = f"/var/ossec/logs/alerts/{when:%Y}/{when:%b}/ossec-alerts-{when:%d}.json.gz"
-        source = f"zcat -f /var/ossec/logs/alerts/alerts.json {archive} 2>/dev/null"
+        archive = f"/var/ossec/logs/alerts/{when:%Y}/{when:%b}/ossec-alerts-{when:%d}.json"
+        current = "/var/ossec/logs/alerts/alerts.json"
+        source = (f"(src={current}; for f in {archive} {archive}.gz; do "
+                  f"if [ -e \"$f\" ] && ! [ \"$f\" -ef {current} ]; then src=\"$src $f\"; fi; done; "
+                  f"zcat -f $src 2>/dev/null)")
     return (f"{source} | jq -r 'select(.agent.name==\"{agent}\") | "
             f"select((.rule.groups // []) | index(\"siemsoar\")) | \"\\(.rule.id) \\(.timestamp)\"'")
 
@@ -226,13 +231,23 @@ class Runner:
     def reobserve(self, run_id: str) -> dict:
         """Conclude a run whose process stopped during its wait (the session ended, the operator's machine slept):
         the attack ran and its alerts are in the manager's alert log, so the verdict is read from there, with the same
-        window and attribution as a live run. Marked `reobserved_at`; a run that already has a verdict is refused."""
+        window and attribution as a live run. Marked `reobserved_at`; a run with a live verdict is refused.
+
+        The expectations are the ones the run recorded when it executed, not today's scenario file: an observation
+        run (`expect: []`) stays an observation run after rules were written from it (2026-10-20: a run made before
+        100141 existed was judged against 100141). A verdict that itself came from a re-observation can be read
+        again (the reader was wrong: archive name, 2026-10-20); the previous one is kept in `superseded_results`."""
         run = next((r for r in self.store.list_runs() if r["run_id"] == run_id), None)
         if run is None:
             raise ValueError(f"unknown run {run_id}")
-        if "result" in run or run.get("execution_error") or not run.get("ended_at"):
-            raise ValueError(f"{run_id} already has a verdict or never finished its execution")
-        s = load_scenarios()[run["scenario"]]
+        if ("result" in run and not run.get("reobserved_at")) or run.get("execution_error") or not run.get("ended_at"):
+            raise ValueError(f"{run_id} already has a live verdict or never finished its execution")
+        if "result" in run:
+            run["superseded_results"] = [*run.get("superseded_results", []),
+                                         {"reobserved_at": run["reobserved_at"], "result": run.pop("result"),
+                                          "siem_alerts": run.pop("siem_alerts", None),
+                                          "observed": run.pop("observed", None)}]
+        s = {**load_scenarios().get(run["scenario"], {}), "expect": run.get("expect", [])}
         run["reobserved_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")[:-4] + "Z"
         return self.conclude(run, s, self.store.list_cases(), day=run["started_at"][:10])
 
