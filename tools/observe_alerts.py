@@ -35,8 +35,9 @@ def summary_command(agent: str, start, end) -> str:
     pick = ", ".join(f"{k}: {v}" for k, v in FIELDS.items())
     uniq = ", ".join(f'{k}: ([.[].{k}] | map(select(. != null)) | unique | .[0:8] | map(tostring | .[0:160]))'
                      for k in FIELDS)
+    # -R + fromjson?: the last line of alerts.json can be half-written while analysisd appends to it
     return ("tail -n 300000 /var/ossec/logs/alerts/alerts.json | "
-            f"jq -c 'select(.agent.name==\"{agent}\" and .timestamp >= \"{lo}\" and .timestamp <= \"{hi}\") | "
+            f"jq -R -c 'fromjson? | select(.agent.name==\"{agent}\" and .timestamp >= \"{lo}\" and .timestamp <= \"{hi}\") | "
             f"{{id: .rule.id, level: .rule.level, d: .rule.description, mitre: .rule.mitre.id, {pick}}}' | "
             f"jq -s -c 'group_by(.id) | map({{rule_id: .[0].id, level: .[0].level, description: .[0].d, "
             f"mitre: .[0].mitre, count: length, {uniq}}}) | sort_by(-.level)'")

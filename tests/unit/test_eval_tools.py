@@ -215,6 +215,7 @@ def test_observe_alerts_filters_on_the_manager_and_validates_the_agent():
                              datetime(2026, 10, 19, 9, 31, 16, tzinfo=UTC))
     assert '.timestamp >= "2026-10-19T09:26:45"' in cmd and '.timestamp <= "2026-10-19T09:31:16"' in cmd
     assert "group_by(.id)" in cmd and ".data.audit.command" in cmd and ".syscheck.path" in cmd
+    assert "jq -R -c 'fromjson? | select(" in cmd
     with pytest.raises(ValueError, match="EC2 instance id"):
         oa.summary_command('i-1" or true', datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 1, 1, tzinfo=UTC))
 
@@ -226,7 +227,10 @@ def test_a_run_is_reobserved_from_the_alert_log_including_the_rotated_archive(mo
     # plain and gzipped archive names (the lab's were plain .json); today's archive is alerts.json itself (-ef)
     archive = "/var/ossec/logs/alerts/2026/Oct/ossec-alerts-19.json"
     assert f"for f in {archive} {archive}.gz;" in cmd and '-ef /var/ossec/logs/alerts/alerts.json' in cmd
-    assert "zcat -f $src" in cmd
+    # archives first, the file being written last; each line parsed alone (a half-written last line is skipped)
+    assert cmd.index('zcat -f "$f"; echo') < cmd.index("cat /var/ossec/logs/alerts/alerts.json)")
+    assert "jq -R -r 'fromjson? | select(" in cmd
+    assert "jq -R -r 'fromjson? | select(" in runner.siem_alerts_command("i-06c071a9fc8745d6c")
     with pytest.raises(ValueError, match="not a date"):
         runner.siem_alerts_command("i-06c071a9fc8745d6c", "19/10; rm -rf /")
 
@@ -267,6 +271,26 @@ def test_reobserve_uses_the_recorded_expectations_and_keeps_a_superseded_verdict
     assert out["result"]["pass"] and out["observed"] == {} and out["expect"] == []
     assert stored["superseded_results"][0]["result"]["pass"] is False
     assert stored["superseded_results"][0]["reobserved_at"] == "2026-10-20T06:35:12Z"
+
+
+def test_a_reobservation_that_failed_to_read_can_be_read_again():
+    """Lab 2026-10-20: two re-observations ended with an observation_error (half-written alerts.json line); once the
+    read works, the run gets a verdict and the failed attempt, error included, moves to superseded_results."""
+    from types import SimpleNamespace
+    stored = {}
+    err = "ssm command Failed: parse error: Invalid literal at line 15157, column 1638"
+    run = {"run_id": "run-202610191817-host-read-shadow-19ff", "scenario": "host-read-shadow", "malicious": True,
+           "started_at": "2026-10-19T18:17:33Z", "ended_at": "2026-10-19T18:17:47Z", "settle_seconds": 120,
+           "target": "i-06c071a9fc8745d6c", "expect": [{"source": "wazuh", "rule_id": "100145", "case": False}],
+           "reobserved_at": "2026-10-20T07:25:05Z", "observation_error": err,
+           "result": {"pass": False, "checks": [{"name": "SIEM read", "ok": False, "detail": err}]}}
+    r = object.__new__(runner.Runner)
+    r.log = lambda m: None
+    r.store = SimpleNamespace(list_runs=lambda: [dict(run)], list_cases=lambda: [], put_run=lambda x: stored.update(x))
+    r.siem_alerts = lambda rr, day=None: [{"rule_id": "100145", "timestamp": "2026-10-19T18:17:41.357Z"}]
+    out = r.reobserve(run["run_id"])
+    assert out["result"]["pass"] and "observation_error" not in out
+    assert stored["superseded_results"][0]["observation_error"] == err
 
 
 def test_a_failed_siem_read_is_recorded_not_fatal():
