@@ -223,7 +223,10 @@ def test_a_run_is_reobserved_from_the_alert_log_including_the_rotated_archive(mo
     """Lab 2026-10-19/20: the operator's session ended while runs waited; their alerts were in the manager's log."""
     from types import SimpleNamespace
     cmd = runner.siem_alerts_command("i-06c071a9fc8745d6c", "2026-10-19")
-    assert "/var/ossec/logs/alerts/2026/Oct/ossec-alerts-19.json.gz" in cmd and cmd.startswith("zcat -f ")
+    # plain and gzipped archive names (the lab's were plain .json); today's archive is alerts.json itself (-ef)
+    archive = "/var/ossec/logs/alerts/2026/Oct/ossec-alerts-19.json"
+    assert f"for f in {archive} {archive}.gz;" in cmd and '-ef /var/ossec/logs/alerts/alerts.json' in cmd
+    assert "zcat -f $src" in cmd
     with pytest.raises(ValueError, match="not a date"):
         runner.siem_alerts_command("i-06c071a9fc8745d6c", "19/10; rm -rf /")
 
@@ -241,8 +244,29 @@ def test_a_run_is_reobserved_from_the_alert_log_including_the_rotated_archive(mo
     assert days == ["2026-10-19"] and out["result"]["pass"] and out["observed"] == {"wazuh:100145": True}
     assert stored["reobserved_at"]
     r.store = SimpleNamespace(list_runs=lambda: [{**run, "result": {"pass": True}}])
-    with pytest.raises(ValueError, match="already has a verdict"):
+    with pytest.raises(ValueError, match="already has a live verdict"):
         r.reobserve(run["run_id"])
+
+
+def test_reobserve_uses_the_recorded_expectations_and_keeps_a_superseded_verdict():
+    """An observation run made before 100141 existed (expect: []) is not judged against today's 100141 expectation;
+    a verdict from a faulty re-observation is replaced, and kept."""
+    from types import SimpleNamespace
+    stored = {}
+    run = {"run_id": "run-202610191028-host-systemd-service-6058", "scenario": "host-systemd-service",
+           "malicious": True, "started_at": "2026-10-19T10:28:23Z", "ended_at": "2026-10-19T10:28:35Z",
+           "settle_seconds": 120, "target": "i-06c071a9fc8745d6c", "expect": [],
+           "reobserved_at": "2026-10-20T06:35:12Z", "siem_alerts": [], "observed": {"wazuh:100141": False},
+           "result": {"pass": False, "checks": [{"name": "wazuh:100141 alert observed in the SIEM", "ok": False}]}}
+    assert any(e["rule_id"] == "100141" for e in runner.load_scenarios()["host-systemd-service"]["expect"])
+    r = object.__new__(runner.Runner)
+    r.log = lambda m: None
+    r.store = SimpleNamespace(list_runs=lambda: [dict(run)], list_cases=lambda: [], put_run=lambda x: stored.update(x))
+    r.siem_alerts = lambda rr, day=None: [{"rule_id": "554", "timestamp": "2026-10-19T10:28:30Z"}]
+    out = r.reobserve(run["run_id"])
+    assert out["result"]["pass"] and out["observed"] == {} and out["expect"] == []
+    assert stored["superseded_results"][0]["result"]["pass"] is False
+    assert stored["superseded_results"][0]["reobserved_at"] == "2026-10-20T06:35:12Z"
 
 
 def test_a_failed_siem_read_is_recorded_not_fatal():
