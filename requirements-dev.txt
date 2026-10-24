@@ -1,4 +1,4 @@
-boto3>=1.35
+boto3>=1.43.116
 moto[dynamodb,s3,sns,stepfunctions,ec2,iam,ssm,secretsmanager]>=5.0
 pytest>=9.1.1
 pyyaml>=6.0.3
