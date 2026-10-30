@@ -11,13 +11,19 @@ atomic:
 verify:
   - 'auditctl -s | grep -q "^enabled 0"'
 cleanup:
-  # ART's cleanup is `auditctl -e 1`; also put the project's rules back and make sure the who-data engine kept its
-  # audit rules (2026-10-20: who-data silently fell back to real-time when auditing was off at an agent restart)
+  # ART's cleanup is `auditctl -e 1`; also put the project's rules back and check the FIM daemon survived
+  # reload the rules with the agent stopped: a reload under a running syscheckd with who-data on can segfault it
+  # (wazuh/wazuh#40844; seen in this scenario's first run, 2026-10-30 03:07:25; FIM blind until the agent restart
+  # at 03:10:12)
+  - 'systemctl stop wazuh-agent'
   - 'auditctl -e 1'
   - 'augenrules --load'
-  - 'sleep 10; auditctl -l | grep -q wazuh_fim || systemctl restart wazuh-agent'
-  - 'auditctl -s | grep -q "^enabled 1"'
-expect: []                # observation run: what the SIEM records when auditing is turned off (official 80705, lab 2026-10-20)
+  - 'systemctl start wazuh-agent'
+  - 'for i in $(seq 1 30); do /var/ossec/bin/wazuh-control status | grep -q "wazuh-syscheckd is running" && auditctl -l | grep -q wazuh_fim && break; sleep 2; done'
+  # the cleanup is one script whose status is its last line: every check goes there
+  - '/var/ossec/bin/wazuh-control status | grep -q "wazuh-syscheckd is running" && auditctl -l | grep -q wazuh_fim && auditctl -s | grep -q "^enabled 1"'
+expect:
+  - {source: wazuh, rule_id: "100147", case: false}   # shadow; written from this scenario's lab events (2026-10-30)
 settle_seconds: 120
 notes: >
   Observation of T1685.004 before any rule: on 2026-10-20 a benign journald restart turned auditing off on two hosts

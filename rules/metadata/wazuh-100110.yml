@@ -21,10 +21,10 @@ tests:
   - name: useradd syslog line (full decoder -> 5902 -> 100110 chain)
     expect: match
     log: "Oct  7 10:00:00 ip-10-0-0-5 useradd[1234]: new user: name=backdoor, UID=1001, GID=1001, home=/home/backdoor, shell=/bin/bash, from=/dev/pts/0"
-  - name: Atomic T1136.001 #1 account recorded on the lab (real useradd line)
+  - name: "Atomic T1136.001 #1 account recorded on the lab (real useradd line)"
     expect: match
     log: "Oct 19 01:29:35 ip-10-42-0-73 useradd[1622]: new user: name=siemsoar_sim_ab03, UID=997, GID=100, home=/home/siemsoar_sim_ab03, shell=/bin/bash, from=none"
-  - name: Atomic T1136.001 #6 root-group account recorded on the lab (real useradd line)
+  - name: "Atomic T1136.001 #6 root-group account recorded on the lab (real useradd line)"
     expect: match
     log: "Oct 19 03:19:46 ip-10-42-0-73 useradd[2796]: new user: name=siemsoar_r_3d44, UID=1002, GID=0, home=/root, shell=/bin/bash, from=none"
   - name: service account without a login shell goes to the exception 100112 (real useradd line)

@@ -41,7 +41,7 @@ tests:
       audit: {user_id: "0", user_name: root, group_id: "0", group_name: root, effective_uid: "0",
               effective_name: root, process_id: 3345, process_name: /usr/bin/dpkg, cwd: /,
               parent_name: /usr/bin/apt-get, parent_cwd: /var/snap/amazon-ssm-agent/13349, ppid: 3324}
-  - name: the Atomic T1053.003 #3 write, a shell under the harness (stays 100140, alert 1792478605.22861270)
+  - name: "the Atomic T1053.003 #3 write, a shell under the harness (stays 100140, alert 1792478605.22861270)"
     expect: no_match
     fim:
       path: /etc/cron.d/persistevil

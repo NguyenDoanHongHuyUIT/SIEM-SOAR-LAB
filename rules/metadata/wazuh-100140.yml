@@ -24,10 +24,10 @@ expected_fp: >
   file is /usr/bin/dpkg under /usr/bin/apt-get: those writes go to the level-3 exception 100146. A cron file an
   administrator writes by hand is written by a shell, like the Atomic one, and stays a false positive of this rule.
 tests:
-  - name: cron.d entry added (Atomic T1053.003 #3 on the lab)
+  - name: "cron.d entry added (Atomic T1053.003 #3 on the lab)"
     expect: match
     fim: {path: /etc/cron.d/persistevil, type: added}
-  - name: user crontab added (Atomic T1053.003 #4 on the lab)
+  - name: "user crontab added (Atomic T1053.003 #4 on the lab)"
     expect: match
     fim: {path: /var/spool/cron/crontabs/persistevil, type: added}
   - name: a file outside the cron directories
@@ -35,7 +35,7 @@ tests:
     fim: {path: /etc/hosts, type: modified}
   # who-data events as the agent sent them on the lab (2026-10-20), audit fields from alerts 1792478605.22861270
   # and 1792478141.20792272
-  - name: cron.d entry written by a shell under the Atomic harness, who-data (T1053.003 #3 on the lab)
+  - name: "cron.d entry written by a shell under the Atomic harness, who-data (T1053.003 #3 on the lab)"
     expect: match
     fim:
       path: /etc/cron.d/persistevil

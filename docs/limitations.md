@@ -24,9 +24,18 @@
   (level 3, "Configuration changed"). Đã sửa: drop-in `Audit=yes` (journald khởi động lại thì **bật** audit; kiểm trên
   lab), tắt `unattended-upgrade` trên máy lab (phần mềm không đổi giữa các lượt đo; máy nhận bản vá khi được dựng lại),
   script cài agent kiểm audit + who-data và thất bại nếu thiếu. Sensor (nơi chạy mọi kịch bản audit) không bị ảnh hưởng:
-  lần nâng cấp systemd của nó là 18/10, trước khi có telemetry audit, và không có bản ghi `audit_enabled=0` nào từ đó.
-  Chưa có rule SIEMSOAR cho việc tắt audit: chỉ mục ART ghim có T1685.004 #1/#2 (xóa rule / `auditctl -e 0`), cần lượt
-  quan sát trước khi viết rule.
+  lần nâng cấp systemd của nó là 18/10, trước khi có telemetry audit, và không có bản ghi `audit_enabled=0` nào từ đó tới lượt Atomic T1685.004 ngày 30/10.
+  Quan sát T1685.004 trên lab (30/10/2026): `auditctl -e 0` (#2) để lại đúng một bản ghi `op=set audit_enabled=0`
+  → rule **100147** (shadow). Trong toàn bộ lịch sử lab (17–30/10) bản ghi này xuất hiện 5 lần, lần nào cũng là mất
+  telemetry thật (2 do journald 20/10, 2 bước chẩn đoán, 1 lượt Atomic). `auditctl -D` (#1) **không phát hiện được**:
+  các bản ghi `op=remove_rule comm="auditctl"` giống hệt khi `augenrules --load` nạp lại rule lành tính (quản trị viên; mọi lần refresh agent trước 30/10). Từ 30/10 refresh nạp lại rule khi agent đã dừng; logcollector mặc định chỉ đọc sự kiện mới khi khởi động lại, nên bản ghi trong khoảng đó có thể không tới SIEM (chưa kiểm trên lab).
+* **Lỗi của Wazuh làm FIM chết âm thầm** (lab 30/10/2026 03:07:25): nạp lại rule audit khi syscheckd đang chạy với
+  who-data → `wazuh-syscheckd` segfault (`segfault at d8 … error 6 in libc.so.6`, sig=11); dịch vụ agent vẫn
+  `active`, log của agent không có dòng nào, FIM mù ~2 phút 46 giây (crash 03:07:25,7 → agent khởi động lại 03:10:12). Trùng khớp
+  [wazuh/wazuh#40844](https://github.com/wazuh/wazuh/issues/40844) (đang mở; báo trên 4.14.9 và 4.14.10-rc1, lab chạy
+  4.14.8). Theo issue, xóa rule từ bên ngoài (`auditctl -D`, `augenrules --load`) là tác nhân, nên kẻ có quyền root có thể tắt FIM theo cách này (trên lab mới thấy với `augenrules --load`). Đã làm: script cài agent và cleanup
+  của kịch bản dừng agent trước khi nạp lại rule (cách né trong issue), cleanup kiểm `wazuh-syscheckd is running`;
+  rule **100148** (level 12) ghi alert khi một daemon Wazuh kết thúc bởi tín hiệu sinh core dump (SIGSEGV/SIGABRT…) lúc audit đang bật (bản ghi ANOM_ABEND; rule chính thức 80711 level 10 không thuộc nhóm SIEMSOAR). Đang **shadow**: chỉ ghi alert, chưa ai được báo cho tới khi promote. Không bắt được: SIGKILL/SIGTERM/OOM, crash khi audit đã tắt, crash của chính logcollector/agentd (tiến trình gửi bản ghi). Kịch bản `host-health-fim-crash` tạo đúng sự cố này (kèm một tiến trình không phải Wazuh làm mẫu âm).
 * Cảnh báo `indexer-connector` ("No available server") trong `ossec.log` của manager xuất hiện **khi khởi động**: manager
   lên trước indexer (~40 s) rồi kết nối được ("IndexerConnector initialized successfully"); không mất dữ liệu.
 * auditd ghi **mọi** lệnh chạy với quyền root: tăng mạnh số alert mức 3 (trong vài phút sau khi bật: khoảng 1 100 alert 80792 mỗi máy, phần lớn do chính script cài đặt). Đo trên lab (20/10/2026): máy mục tiêu rảnh sinh 105 alert 80792 trong 40 phút (khoảng 2,6/phút, phần lớn là lệnh định kỳ của chính Wazuh Agent: `ps`, `df`, `last`); manager `events_dropped = 0`, alert 40 MB, indexer 44 MB sau hai ngày. Lượng này tăng theo số máy và hoạt động quản trị; `events_dropped` của analysisd là chỉ số theo dõi.

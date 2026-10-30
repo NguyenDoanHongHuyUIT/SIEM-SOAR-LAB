@@ -1,0 +1,44 @@
+id: wazuh-100148
+engine: wazuh
+rule_id: 100148
+name: Wazuh agent daemon ended abnormally
+state: shadow
+response: none
+mitre: []                # a health rule: monitoring stopped; it claims no adversary technique
+wraps: [80711]
+references:
+  - https://github.com/wazuh/wazuh/issues/40844
+  - https://github.com/wazuh/wazuh/blob/v4.14.8/ruleset/rules/0365-auditd_rules.xml
+owner: nguyen-doan-hong-huy
+created: 2026-10-30
+data_source: Linux audit ANOM_ABEND record via the official Wazuh rule 80711
+description: >
+  A Wazuh agent daemon (/var/ossec/bin/wazuh-*) ended on a core-dumping signal (SIGSEGV, SIGABRT, SIGBUS...) while
+  kernel auditing was on: the kernel writes ANOM_ABEND only in that case. Observed on the lab 2026-10-30 03:07:25:
+  wazuh-syscheckd segfaulted (kernel "segfault at d8 ... error 6 in libc.so.6", sig=11) right after the audit rules
+  were reloaded while who-data was on; nothing in the agent's own log, and FIM stayed blind until the agent restarted
+  at 03:10:12. Same trigger, signature and effect as wazuh/wazuh#40844 (open; reported on 4.14.9 and 4.14.10-rc1, the
+  lab runs 4.14.8). The official 80711 has level 10 but no SIEMSOAR group. Known gaps: SIGKILL/SIGTERM and OOM kills
+  write no ANOM_ABEND; nothing is written while auditing is off (100147 covers turning it off); a crash of
+  wazuh-logcollector or wazuh-agentd is unlikely to reach the manager, since those daemons ship the record.
+expected_fp: >
+  None expected: a Wazuh daemon ending on a core-dumping signal is a monitoring outage whatever the cause. Lab history
+  2026-10-17..30, every ANOM_ABEND record: the syscheckd crash above, then the two records of the 03:43 procedure of
+  host-health-fim-crash (a SIGSEGV'd sleep, which must not match, and a SIGSEGV'd wazuh-syscheckd). Shadow: it only
+  records an alert; no one is told until it is promoted.
+tests:
+  - name: "wazuh-syscheckd segfault after an audit rules reload with who-data on (alert 1793329647.12305459, 2026-10-30T03:07:27Z, i-06c071a9fc8745d6c)"
+    expect: match
+    log_format: audit
+    location: /var/log/audit/audit.log
+    log: "type=ANOM_ABEND msg=audit(1793329645.739:3598): auid=4294967295 uid=0 gid=121 ses=4294967295 subj=unconfined pid=2543 comm=\"wazuh-syscheckd\" exe=\"/var/ossec/bin/wazuh-syscheckd\" sig=11 res=1\x1dAUID=\"unset\" UID=\"root\" GID=\"wazuh\""
+  - name: "wazuh-syscheckd ended with SIGSEGV by the lab health procedure (alert 1793331796.17239105, 2026-10-30T03:43:16Z, i-0fae75c4e81ca3061)"
+    expect: match
+    log_format: audit
+    location: /var/log/audit/audit.log
+    log: "type=ANOM_ABEND msg=audit(1793331795.591:3670): auid=4294967295 uid=0 gid=121 ses=4294967295 subj=unconfined pid=2446 comm=\"wazuh-syscheckd\" exe=\"/var/ossec/bin/wazuh-syscheckd\" sig=11 res=1\x1dAUID=\"unset\" UID=\"root\" GID=\"wazuh\""
+  - name: "a non-Wazuh process (sleep) ended with SIGSEGV: reaches 80711, rejected by the exe/comm match (alert 1793331796.17234386, 2026-10-30T03:43:16Z, i-0fae75c4e81ca3061)"
+    expect: no_match
+    log_format: audit
+    location: /var/log/audit/audit.log
+    log: "type=ANOM_ABEND msg=audit(1793331795.433:3667): auid=4294967295 uid=0 gid=0 ses=4294967295 subj=snap.amazon-ssm-agent.amazon-ssm-agent pid=3554 comm=\"sleep\" exe=\"/usr/bin/sleep\" sig=11 res=1\x1dAUID=\"unset\" UID=\"root\" GID=\"root\""

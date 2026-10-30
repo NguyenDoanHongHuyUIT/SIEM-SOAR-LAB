@@ -181,4 +181,26 @@
       <id>T1003.008</id>
     </mitre>
   </rule>
+
+  <!-- Audit telemetry tampering, from the T1685.004 observation runs (lab 2026-10-30). `auditctl -e 0` leaves one
+       CONFIG_CHANGE record, op=set audit_enabled=0, seen by the official 80705 at level 3 only. The same record came
+       from systemd-journald (Audit=no) on 2026-10-20, a real outage of the targets' telemetry. -->
+  <rule id="100147" level="10">
+    <if_sid>80705</if_sid>
+    <match type="pcre2">\bop=set audit_enabled=0 </match>
+    <description>SIEMSOAR: kernel auditing turned off</description>
+    <mitre>
+      <id>T1685.004</id>
+    </mitre>
+  </rule>
+
+  <!-- A Wazuh agent daemon ended by a core-dumping signal (ANOM_ABEND, official 80711; the kernel writes it only for
+       such signals and only while auditing is on). Lab 2026-10-30: wazuh-syscheckd segfaulted when the audit rules were
+       reloaded with who-data on (wazuh/wazuh#40844); FIM stays blind until the agent restarts. A health rule: it claims
+       no technique. comm too: a replaced or deleted binary is logged hex-encoded in exe. -->
+  <rule id="100148" level="12">
+    <if_sid>80711</if_sid>
+    <match type="pcre2">\b(exe="/var/ossec/bin/wazuh-[a-z]+"|comm="wazuh-[a-z]+")</match>
+    <description>SIEMSOAR: Wazuh agent daemon ended abnormally (monitoring silently stopped)</description>
+  </rule>
 </group>

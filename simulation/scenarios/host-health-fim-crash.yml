@@ -1,0 +1,22 @@
+id: host-health-fim-crash
+title: Health - a Wazuh agent daemon ends on SIGSEGV (FIM silently stopped), next to a non-Wazuh process doing the same
+kind: ssm_shell
+target: lab-target
+malicious: false
+commands:
+  # a non-Wazuh process ending on SIGSEGV: official 80711 only, rule 100148 must not fire
+  - 'sleep 600 & p=$!; sleep 1; kill -SEGV $p; wait $p; test $? -eq 139'
+  # the failure seen on 2026-10-30 03:07:25 (wazuh/wazuh#40844), produced on purpose: syscheckd ends on SIGSEGV and the
+  # agent service stays active
+  - 'kill -SEGV $(pidof wazuh-syscheckd); sleep 3; ! /var/ossec/bin/wazuh-control status | grep -q "wazuh-syscheckd is running"'
+cleanup:
+  - 'systemctl restart wazuh-agent'
+  - 'for i in $(seq 1 30); do /var/ossec/bin/wazuh-control status | grep -q "wazuh-syscheckd is running" && auditctl -l | grep -q wazuh_fim && break; sleep 2; done'
+  # the cleanup is one script whose status is its last line: every check goes there
+  - '/var/ossec/bin/wazuh-control status | grep -q "wazuh-syscheckd is running" && auditctl -l | grep -q wazuh_fim && auditctl -s | grep -q "^enabled 1"'
+expect:
+  - {source: wazuh, rule_id: "100148", case: false}   # health rule (shadow); its declared outcome, not a TP/FP
+settle_seconds: 120
+notes: >
+  Lab procedure, not ATT&CK evidence: it checks that a monitoring outage of the kind found on 2026-10-30 is reported.
+  Procedure first run by hand on lab-target-2 at 03:43 (records used by the tests of 100148).

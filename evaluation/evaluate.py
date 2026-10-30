@@ -314,6 +314,15 @@ def detection_quality(runs: list[dict], rules_meta: dict | None = None, releases
             "benign_expected": dict(sorted(benign_expected.items()))}
 
 
+def credits_technique(case: dict, runs: list[dict], labels: dict) -> bool:
+    """A TP case counts as detecting its run's technique only when the run expected that rule as its detection, not as
+    an `optional` side effect (host-reactivate-account: the account its set-up creates also fires 100110)."""
+    if labels.get(case["case_id"]) != "tp":
+        return False
+    _, exp = attribute(case, runs)
+    return exp is not None and not exp.get("optional")
+
+
 def variant_coverage(runs: list[dict], cases: list[dict], labels: dict, scenarios: dict, art_index: dict) -> dict:
     """Per technique: the public Atomic Red Team tests the pinned Linux index lists, how many distinct tests the lab
     ran (valid malicious runs), and how many of those were detected (an expected rule alerted, or a TP case). It shows
@@ -322,7 +331,7 @@ def variant_coverage(runs: list[dict], cases: list[dict], labels: dict, scenario
     guid_of = {sid: (s.get("atomic") or {}).get("test_guid") for sid, s in scenarios.items()}
     tests = (art_index or {}).get("tests", {})
     per: dict[str, dict] = {}
-    detected_cases = {c["case_id"] for c in cases if labels.get(c["case_id"]) == "tp"}
+    detected_cases = {c["case_id"] for c in cases if credits_technique(c, runs, labels)}
     for r in runs:
         guid = guid_of.get(r.get("scenario"))
         if not guid or guid not in tests or not r.get("malicious") or execution_failed(r):
@@ -357,7 +366,7 @@ def attack_coverage(rules_meta: dict, runs: list[dict], labels: dict, cases: lis
                 for t in r.get("techniques", [])} - exercised
     detected = set()
     for c in cases:
-        if labels.get(c["case_id"]) == "tp":
+        if credits_technique(c, runs, labels):
             run, _ = attribute(c, runs)
             detected |= set((run or {}).get("techniques", []))
     for r in valid:
@@ -595,7 +604,8 @@ def render_markdown(m: dict) -> str:
         L.append(f"| {rid} | {b['state'] or '?'} | {b['tp']} | {b['fp']} | {b['fn']} | {b['unplanned']} "
                  f"| {b.get('benign_runs', 0)} | {prec} | {rec} |")
     if dq.get("benign_expected"):
-        L += ["", "Hoạt động lành tính được rule nhận đúng như kịch bản khai báo (rule ngoại lệ; không tính TP/FP): "
+        L += ["", "Hoạt động lành tính được rule nhận đúng như kịch bản khai báo (rule ngoại lệ hoặc rule sức khỏe; "
+              "không tính TP/FP): "
               + ", ".join(f"{rid} ({n} lượt)" for rid, n in dq["benign_expected"].items())]
     k = m["pipeline_canary"]
     L += ["", "## Canary pipeline (không tính vào chất lượng rule)", "",

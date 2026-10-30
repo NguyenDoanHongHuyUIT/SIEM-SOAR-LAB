@@ -45,6 +45,11 @@ systemctl restart systemd-journald
 # Linux audit (system calls): every root command and reads of the credential stores, whatever tool is used
 apt-get install -y auditd
 install -m 0640 "$BOOT/agent/siemsoar.rules" /etc/audit/rules.d/siemsoar.rules
+# Reloading the audit rules under a running syscheckd with who-data on can segfault it (wazuh/wazuh#40844; lab
+# 2026-10-30): the agent is stopped first and restarted below, the workaround given in that issue.
+systemctl stop wazuh-agent 2>/dev/null || true
+# whatever fails from here on (set -e), the agent is not left stopped
+trap 'systemctl is-active -q wazuh-agent || systemctl start wazuh-agent || true' EXIT
 augenrules --load
 systemctl enable --now auditd
 
@@ -64,7 +69,8 @@ OPTS=/var/ossec/etc/local_internal_options.conf
 sed -i '/^logcollector.queue_size=/d' "$OPTS"
 echo "logcollector.queue_size=16384" >> "$OPTS"
 systemctl daemon-reload
-systemctl enable --now wazuh-agent
+systemctl enable wazuh-agent
+# one start after `since`, so the who-data check below cannot read an earlier instance's (6019)
 since=$(date '+%Y/%m/%d %H:%M:%S')
 systemctl restart wazuh-agent
 
