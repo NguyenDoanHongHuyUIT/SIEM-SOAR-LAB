@@ -360,23 +360,80 @@ def _git(*args: str) -> str:
     return subprocess.run(["git", *args], cwd=ROOT, check=True, capture_output=True, text=True).stdout
 
 
-def lifecycle_check(base: str, allow_revert: bool = False) -> list[str]:
-    """Compare metadata states with the base ref. New rules must start in shadow; moves must follow FREEZE."""
-    errors = []
-    current = load_metadata()
-    for mid, m in current.items():
-        rel = Path(m["_path"]).relative_to(ROOT).as_posix()
+REVERTED = re.compile(r"^This reverts commit ([0-9a-f]{7,40})", re.M)  # the line `git revert` writes
+
+
+def _states_at(ref: str) -> dict[str, str | None]:
+    """Lifecycle state of every metadata file at a git ref, by rule id ({} when the ref has no metadata directory)."""
+    rel = (RULES / "metadata").relative_to(ROOT).as_posix()
+    try:
+        names = _git("ls-tree", "--name-only", f"{ref}:{rel}").split()
+    except subprocess.CalledProcessError:
+        return {}
+    states = {}
+    for name in names:
+        if name.endswith(".yml"):
+            data = yaml.safe_load(_git("show", f"{ref}:{rel}/{name}")) or {}
+            states[data.get("id", name[:-4])] = data.get("state")
+    return states
+
+
+def _revert_moves(base: str) -> dict[str, set[tuple[str | None, str | None]]]:
+    """Per rule, the state moves (None = no file) that undo a commit reverted on this branch.
+
+    Only commits already in the base history count: a branch cannot invent the commit it claims to revert."""
+    moves: dict[str, set[tuple[str | None, str | None]]] = {}
+    for sha in REVERTED.findall(_git("log", "--format=%B", f"{base}..HEAD")):
         try:
-            old = yaml.safe_load(_git("show", f"{base}:{rel}"))
+            _git("merge-base", "--is-ancestor", sha, base)
+            _git("rev-parse", "--verify", "--quiet", f"{sha}^")  # a root commit has no state to go back to
         except subprocess.CalledProcessError:
-            old = None
-        if old is None:
-            if m["state"] != "shadow" and not allow_revert:
-                errors.append(f"{mid}: new rules must be introduced as `shadow` (found `{m['state']}`)")
             continue
-        a, b = old["state"], m["state"]
-        if a != b and b not in FREEZE.get(a, set()) and not allow_revert:
+        before, after = _states_at(f"{sha}^"), _states_at(sha)
+        for mid in before.keys() | after.keys():
+            if before.get(mid) != after.get(mid):
+                moves.setdefault(mid, set()).add((after.get(mid), before.get(mid)))
+    return moves
+
+
+def _undoes(moves: set[tuple[str | None, str | None]], a: str | None, b: str | None) -> bool:
+    """True when a -> b is a chain of reverted moves (reverting several commits at once)."""
+    seen, todo = {a}, [a]
+    while todo:
+        s = todo.pop()
+        for x, y in moves:
+            if x == s and y not in seen:
+                if y == b:
+                    return True
+                seen.add(y)
+                todo.append(y)
+    return False
+
+
+def lifecycle_check(base: str, allow_revert: bool = False) -> list[str]:
+    """Compare metadata states with the base ref. New rules must start in shadow; moves must follow FREEZE; a rule
+    leaves the repository only from `deprecated`.
+
+    allow_revert (PRs titled "Revert ..."): a move outside these rules passes only when it restores the states a
+    commit reverted on this branch (`This reverts commit <sha>`) had before that commit; everything else is checked."""
+    errors = []
+    old_states = _states_at(base)
+    current = load_metadata()
+    moves = _revert_moves(base) if allow_revert else {}
+    for mid in sorted(old_states.keys() | current.keys()):
+        a, b = old_states.get(mid), current[mid]["state"] if mid in current else None
+        if a == b or _undoes(moves.get(mid, set()), a, b):
+            continue
+        if a is None:
+            if b != "shadow":
+                errors.append(f"{mid}: new rules must be introduced as `shadow` (found `{b}`)")
+        elif b is None:
+            if a != "deprecated":
+                errors.append(f"{mid}: rule removed while `{a}`: move it to `deprecated` first, remove it later")
+        elif b not in FREEZE.get(a, set()):
             errors.append(f"{mid}: illegal lifecycle move {a} -> {b} (allowed: {sorted(FREEZE.get(a, []))})")
+    if errors and allow_revert and not moves:
+        errors.append(f"--allow-revert: no commit of {base} is reverted on this branch (`This reverts commit <sha>`)")
     return errors
 
 

@@ -231,3 +231,18 @@ def test_the_decision_card_is_closed_whatever_channel_decided(store, sfn, monkey
     assert store.get_case(cid)["slack_card"] == {"gate": "approval", "channel": "C0TEST", "ts": "171.5"}
     decisions.apply_decision(store, cid, "approval", "dismiss", actor="cli:U0APPROVER", channel="cli")
     assert updates == [("C0TEST", "171.5", "*dismiss* by `cli:U0APPROVER` via cli")]
+
+
+# ------------------------------------------------------------------ configuration
+@pytest.mark.parametrize(("value", "dry"), [(None, True), ("", True), ("true", True), ("yes", True),
+                                            ("false", False), (" False ", False)])
+def test_dry_run_is_on_unless_explicitly_turned_off(monkeypatch, value, dry):
+    """Fail safe: a function deployed without DRY_RUN (or with a typo) must not touch AWS resources. Terraform always
+    sets it (lambdas.tf); the code default only covers a missing or garbled variable."""
+    from siemsoar import config
+    if value is None:
+        monkeypatch.delenv("DRY_RUN", raising=False)
+    else:
+        monkeypatch.setenv("DRY_RUN", value)
+    assert config.settings().dry_run is dry
+    assert config.settings().workflow_config()["dry_run"] is dry

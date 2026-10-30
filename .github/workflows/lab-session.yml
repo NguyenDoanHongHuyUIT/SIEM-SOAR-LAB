@@ -27,6 +27,8 @@ env:
   TF_VAR_alert_email: ${{ secrets.ALERT_EMAIL }} # secret: Actions logs of a public repo are public
   TF_VAR_slack_channel: ${{ vars.SLACK_CHANNEL }}
   TF_VAR_dry_run: ${{ vars.DRY_RUN || 'true' }}
+  # every TF_VAR_* of terraform.yml (tests/unit/test_workflows.py): a missing one resets that setting on each session apply
+  TF_VAR_enable_fault_injection: ${{ vars.ENABLE_FAULT_INJECTION || 'false' }}
 
 defaults:
   run:
@@ -48,7 +50,7 @@ jobs:
       - run: pip install boto3
       - uses: hashicorp/setup-terraform@v4
         with:
-          terraform_version: "1.10.5"
+          terraform_version: "1.14.9"
           terraform_wrapper: false
       - run: terraform -chdir=$TF_DIR init -input=false -backend-config="bucket=${{ vars.TFSTATE_BUCKET }}" -backend-config="region=$AWS_REGION"
 

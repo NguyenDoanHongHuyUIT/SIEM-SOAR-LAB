@@ -10,7 +10,7 @@ mock_provider "aws" {
     defaults = { account_id = "123456789012" }
   }
   mock_data "aws_region" {
-    defaults = { name = "ap-southeast-1" }
+    defaults = { region = "ap-southeast-1" }
   }
   mock_data "aws_ssm_parameter" {
     defaults = { value = "ami-0123456789abcdef0" }

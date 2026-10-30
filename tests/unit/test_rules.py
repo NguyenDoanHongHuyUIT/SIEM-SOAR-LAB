@@ -250,7 +250,10 @@ def test_lifecycle_gate_against_git_base(tmp_path):
         assert rc.lifecycle_check("HEAD") == []
         _edit_meta(repo / "rules", "wazuh-100101.yml", lambda d: d.update(state="enforce"))  # shadow -> enforce
         assert any("illegal lifecycle move shadow -> enforce" in e for e in rc.lifecycle_check("HEAD"))
-        assert rc.lifecycle_check("HEAD", allow_revert=True) == []
+        # a "Revert" title alone no longer opens the gate: nothing on this branch reverts a commit
+        errs = rc.lifecycle_check("HEAD", allow_revert=True)
+        assert any("illegal lifecycle move shadow -> enforce" in e for e in errs)
+        assert any("no commit of HEAD is reverted" in e for e in errs)
         _edit_meta(repo / "rules", "wazuh-100101.yml", lambda d: d.update(state="active"))
         assert rc.lifecycle_check("HEAD") == []
         new = repo / "rules" / "metadata" / "wazuh-100199.yml"
@@ -258,6 +261,71 @@ def test_lifecycle_gate_against_git_base(tmp_path):
         data.update(id="wazuh-100199", rule_id=100199, state="active")
         new.write_text(yaml.safe_dump(data))
         assert any("new rules must be introduced as `shadow`" in e for e in rc.lifecycle_check("HEAD"))
+        assert any("new rules must be introduced as `shadow`" in e
+                   for e in rc.lifecycle_check("HEAD", allow_revert=True))
+    finally:
+        rc.ROOT, rc.RULES = orig_root, orig_rules
+
+
+def test_lifecycle_gate_removed_rules_and_reverts(tmp_path):
+    """A rule leaves only from `deprecated`; a revert may only restore the states the reverted commits had before."""
+    repo = tmp_path / "r"
+    shutil.copytree(ROOT / "rules", repo / "rules")
+    git = lambda *a: subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", *a],  # noqa: E731
+                                    cwd=repo, check=True, capture_output=True, text=True).stdout.strip()
+    meta = repo / "rules" / "metadata"
+
+    def commit(msg):
+        git("add", "-A")
+        git("commit", "-qm", msg)
+        return git("rev-parse", "HEAD")
+
+    git("init", "-q")
+    commit("base")
+    _edit_meta(repo / "rules", "wazuh-100101.yml", lambda d: d.update(state="active"))
+    promote = commit("promote 100101")
+    _edit_meta(repo / "rules", "wazuh-100101.yml", lambda d: d.update(state="enforce"))
+    enforce = commit("enforce 100101")
+    _edit_meta(repo / "rules", "wazuh-100102.yml", lambda d: d.update(state="deprecated"))
+    commit("deprecate 100102")
+    data = yaml.safe_load((meta / "wazuh-100100.yml").read_text())
+    data.update(id="wazuh-100199", rule_id=100199)
+    (meta / "wazuh-100199.yml").write_text(yaml.safe_dump(data))
+    added = commit("add 100199")
+    git("branch", "base")
+    import tools.rulesctl as rc
+    orig_root, orig_rules = rc.ROOT, rc.RULES
+    try:
+        rc.ROOT, rc.RULES = repo, repo / "rules"
+        # removal: only a deprecated rule may go
+        (meta / "wazuh-100100.yml").unlink()
+        (meta / "wazuh-100102.yml").unlink()
+        errs = rc.lifecycle_check("base")
+        assert errs == ["wazuh-100100: rule removed while `shadow`: move it to `deprecated` first, remove it later"]
+        git("checkout", "--", "rules")
+        # reverting two commits at once: enforce -> shadow is the way back, legal only as a revert
+        git("revert", "--no-edit", enforce, promote)
+        assert any("illegal lifecycle move enforce -> shadow" in e for e in rc.lifecycle_check("base"))
+        assert rc.lifecycle_check("base", allow_revert=True) == []
+        # the revert exemption covers only the reverted rule and only the way back
+        _edit_meta(repo / "rules", "wazuh-100103.yml", lambda d: d.update(state="enforce"))
+        assert [e.split(":")[0] for e in rc.lifecycle_check("base", allow_revert=True)] == ["wazuh-100103"]
+        _edit_meta(repo / "rules", "wazuh-100103.yml", lambda d: d.update(state="shadow"))
+        _edit_meta(repo / "rules", "wazuh-100101.yml", lambda d: d.update(state="deprecated"))
+        assert rc.lifecycle_check("base", allow_revert=True) == []  # enforce -> deprecated is legal anyway
+        git("checkout", "--", "rules")
+        # reverting the commit that added a rule removes it while still in shadow
+        git("revert", "--no-edit", added)
+        assert any(e.startswith("wazuh-100199: rule removed") for e in rc.lifecycle_check("base"))
+        assert rc.lifecycle_check("base", allow_revert=True) == []
+        # a branch cannot revert a commit of its own to fake a way back
+        _edit_meta(repo / "rules", "wazuh-100104.yml", lambda d: d.update(state="enforce"))
+        commit("own: 100104 enforce")
+        _edit_meta(repo / "rules", "wazuh-100104.yml", lambda d: d.update(state="shadow"))
+        own = commit("own: 100104 shadow")
+        git("revert", "--no-edit", own)  # its "way back" is shadow -> enforce, but `own` is not in the base
+        assert any("wazuh-100104: illegal lifecycle move shadow -> enforce" in e
+                   for e in rc.lifecycle_check("base", allow_revert=True))
     finally:
         rc.ROOT, rc.RULES = orig_root, orig_rules
 

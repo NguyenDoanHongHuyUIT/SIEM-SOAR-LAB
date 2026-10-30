@@ -45,11 +45,18 @@ resource "aws_iam_role_policy_attachment" "plan_readonly" {
   policy_arn = "arn:aws:iam::aws:policy/ReadOnlyAccess"
 }
 
-# plan cần đọc state và ghi file lock
+# plan reads the state and writes only the S3 lock file (backend use_lockfile = true: <key>.tflock). The role is
+# assumable by any same-repo pull request: it must not be able to overwrite the state the admin apply later trusts.
 data "aws_iam_policy_document" "plan_state" {
   statement {
-    actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"]
+    sid       = "ReadState"
+    actions   = ["s3:GetObject", "s3:ListBucket"]
     resources = [aws_s3_bucket.tfstate.arn, "${aws_s3_bucket.tfstate.arn}/*"]
+  }
+  statement {
+    sid       = "LockOnly"
+    actions   = ["s3:PutObject", "s3:DeleteObject"]
+    resources = ["${aws_s3_bucket.tfstate.arn}/lab/terraform.tfstate.tflock"] # infra/envs/lab/backend.tf key + ".tflock"
   }
 }
 
