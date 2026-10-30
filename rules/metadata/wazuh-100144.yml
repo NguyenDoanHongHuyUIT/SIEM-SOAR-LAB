@@ -25,12 +25,12 @@ expected_fp: >
   the same run chmod 755, g+w, -R a+rX and the sticky 1777 did not raise it. Packages installing setuid helpers:
   not measured.
 tests:
-  - name: chmod u+xs (Atomic T1548.001 #3, recorded on the lab)
+  - name: "chmod u+xs (Atomic T1548.001 #3, recorded on the lab)"
     expect: match
     log_format: audit
     location: /var/log/audit/audit.log
     log: "type=SYSCALL msg=audit(1792430846.987:2423): arch=c000003e syscall=59 success=yes exit=0 a0=58a3809d78b8 a1=58a3809cb660 a2=58a3809db9c0 a3=0 items=2 ppid=2399 pid=2400 auid=4294967295 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=(none) ses=4294967295 comm=\"chmod\" exe=\"/usr/bin/chmod\" subj=snap.amazon-ssm-agent.amazon-ssm-agent key=\"audit-wazuh-c\"\u001dARCH=x86_64 SYSCALL=execve AUID=\"unset\" UID=\"root\" GID=\"root\" EUID=\"root\" SUID=\"root\" FSUID=\"root\" EGID=\"root\" SGID=\"root\" FSGID=\"root\" type=EXECVE msg=audit(1792430846.987:2423): argc=3 a0=\"chmod\" a1=\"u+xs\" a2=\"/tmp/evilBinary\" type=CWD msg=audit(1792430846.987:2423): cwd=\"/var/snap/amazon-ssm-agent/13349\" type=PATH msg=audit(1792430846.987:2423): item=0 name=\"/usr/bin/chmod\" inode=1537 dev=103:01 mode=0100755 ouid=0 ogid=0 rdev=00:00 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0\u001dOUID=\"root\" OGID=\"root\" type=PATH msg=audit(1792430846.987:2423): item=1 name=\"/lib64/ld-linux-x86-64.so.2\" inode=4973 dev=103:01 mode=0100755 ouid=0 ogid=0 rdev=00:00 nametype=NORMAL cap_fp=0 cap_fi=0 cap_fe=0 cap_fver=0 cap_frootid=0\u001dOUID=\"root\" OGID=\"root\" type=PROCTITLE msg=audit(1792430846.987:2423): proctitle=63686D6F6400752B7873002F746D702F6576696C42696E617279"
-  - name: chmod g+xs (Atomic T1548.001 #5, recorded on the lab)
+  - name: "chmod g+xs (Atomic T1548.001 #5, recorded on the lab)"
     expect: match
     log_format: audit
     location: /var/log/audit/audit.log

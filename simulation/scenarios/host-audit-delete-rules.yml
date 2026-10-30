@@ -12,11 +12,19 @@ verify:
   - 'test "$(auditctl -l | grep -c audit-wazuh)" = 0'     # the project's rules are gone (syscheckd re-adds only its own)
 cleanup:
   # ART's cleanup is `service auditd restart`; then the same checks as host-audit-disable
+  # reload the rules with the agent stopped: a reload under a running syscheckd with who-data on can segfault it
+  # (wazuh/wazuh#40844; seen in host-audit-disable's cleanup, 2026-10-30 03:07:25; during this scenario's 03:09:53
+  # run syscheckd was already down, restarted by its cleanup at 03:10:12)
+  - 'systemctl stop wazuh-agent'
   - 'auditctl -e 1'
   - 'augenrules --load'
-  - 'sleep 10; auditctl -l | grep -q wazuh_fim || systemctl restart wazuh-agent'
-  - 'test "$(auditctl -l | grep -c audit-wazuh)" -ge 4'
-expect: []                # observation run; benign `augenrules --load` (every agent refresh) also removes all rules first
+  - 'systemctl start wazuh-agent'
+  - 'for i in $(seq 1 30); do /var/ossec/bin/wazuh-control status | grep -q "wazuh-syscheckd is running" && auditctl -l | grep -q wazuh_fim && break; sleep 2; done'
+  # the cleanup is one script whose status is its last line: every check goes there
+  - '/var/ossec/bin/wazuh-control status | grep -q "wazuh-syscheckd is running" && auditctl -l | grep -q wazuh_fim && auditctl -s | grep -q "^enabled 1" && test "$(auditctl -l | grep -c audit-wazuh)" -ge 4'
+expect: []                # no rule: the records equal a benign `augenrules --load` run with the agent up (2026-10-30)
+# `auditctl -D` under a running syscheckd may segfault it (wazuh/wazuh#40844 lists it as a trigger; not observed on the
+# lab for -D): 100148 would then show as unplanned in this run; it is exercised by host-health-fim-crash instead.
 settle_seconds: 120
 notes: >
   Observation of T1685.004 #1. The same CONFIG_CHANGE remove_rule records come from a benign rule reload

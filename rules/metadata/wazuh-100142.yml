@@ -24,10 +24,10 @@ expected_fp: >
   writer as /usr/bin/dash, as for the Atomic T1546.004 #4 append: the same write, only intent differs, and who-data
   does not separate them. No package write to these files has been observed, so no package exception is written.
 tests:
-  - name: root .bashrc changed (Atomic T1546.004 #2 on the lab)
+  - name: "root .bashrc changed (Atomic T1546.004 #2 on the lab)"
     expect: match
     fim: {path: /root/.bashrc}
-  - name: system profile changed (Atomic T1546.004 #4 on the lab)
+  - name: "system profile changed (Atomic T1546.004 #4 on the lab)"
     expect: match
     fim: {path: /etc/profile}
   - name: another file in /etc

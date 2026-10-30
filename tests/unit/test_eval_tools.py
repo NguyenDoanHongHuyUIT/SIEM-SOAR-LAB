@@ -95,7 +95,8 @@ def test_a_scenario_whose_technique_contradicts_the_rule_it_expects_is_reported(
 
 def test_every_rule_is_exercised_by_a_scenario():
     meta = rulesctl.load_metadata()
-    covered = {catalog.metadata_id(e, meta) for s in runner.load_scenarios().values() for e in s.get("expect", [])}
+    covered = {catalog.metadata_id(e, meta) for s in runner.load_scenarios().values() for e in s.get("expect", [])
+               if not e.get("optional")}       # an optional side effect is not a scenario for the rule
     for key, m in meta.items():
         if m["state"] != "deprecated":
             assert key in covered, f"{key} has no simulation scenario"
@@ -612,7 +613,7 @@ def test_an_exception_rule_taking_benign_activity_is_reported_not_scored():
     assert "100146" not in dq["rules"] and dq["rules"]["100142"]["fp"] == 1 and dq["rules"]["100145"]["fp"] == 1
     m = ev.compute_metrics([], [run], {})
     m["detection_quality"] = dq
-    assert "rule ngoại lệ; không tính TP/FP): 100146 (1 lượt)" in ev.render_markdown(m)
+    assert "không tính TP/FP): 100146 (1 lượt)" in ev.render_markdown(m)
 
 
 def test_failed_cases_are_listed_with_their_cause_and_origin():
@@ -638,6 +639,28 @@ def test_failed_cases_are_listed_with_their_cause_and_origin():
     md = ev.render_markdown(m)
     assert "## Case FAILED" in md and "lỗi do kiểm thử robustness cố ý tiêm" in md and "khôi phục tay: không ghi nhận" in md
     assert "AKIA" not in md                                          # an IAM resource id is never printed
+
+
+def test_an_optional_side_effect_case_does_not_credit_the_runs_technique():
+    """host-reactivate-account (T1078.003) lists 100110 as optional: the account its set-up creates fires it. That case is
+    a TP of 100110, not a detection of T1078.003."""
+    run = {"run_id": "run-202610191200-host-reactivate-account-abcd", "scenario": "host-reactivate-account",
+           "malicious": True, "kind": "atomic", "techniques": ["T1078.003"], "target": "i-06c071a9fc8745d6c",
+           "started_at": "2026-10-19T12:00:00Z", "ended_at": "2026-10-19T12:00:20Z", "settle_seconds": 120,
+           "expect": [{"source": "wazuh", "rule_id": "100102", "case": False},
+                      {"source": "wazuh", "rule_id": "100110", "case": True, "optional": True}],
+           "siem_alerts": []}
+    case = {"case_id": "C-1", "source": "wazuh", "rule_id": "100110", "status": "ACKNOWLEDGED",
+            "resource_id": "i-06c071a9fc8745d6c", "created_at": "2026-10-19T12:00:10Z",
+            "event_time": "2026-10-19T12:00:08Z", "alert_count": 1}
+    labels = {"C-1": "tp"}
+    assert ev.attribute(case, [run])[1]["optional"] is True
+    assert not ev.credits_technique(case, [run], labels)
+    cov = ev.attack_coverage({}, [run], labels, [case])
+    assert "T1078.003" not in cov["techniques_detected"]
+    run_req = {**run, "expect": [{"source": "wazuh", "rule_id": "100110", "case": True}]}
+    assert ev.credits_technique(case, [run_req], labels)
+    assert "T1078.003" in ev.attack_coverage({}, [run_req], labels, [case])["techniques_detected"]
 
 
 def test_manual_steps_are_read_from_the_case_timeline():

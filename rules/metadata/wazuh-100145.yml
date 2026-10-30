@@ -27,7 +27,7 @@ expected_fp: >
   interpreter would also excuse an attacker's perl. Re-measure on new benign runs: these exclusions come from the
   same data the false positives were found in.
 tests:
-  - name: cat /etc/shadow (Atomic T1003.008 #1, recorded on the lab)
+  - name: "cat /etc/shadow (Atomic T1003.008 #1, recorded on the lab)"
     expect: match
     log_format: audit
     location: /var/log/audit/audit.log

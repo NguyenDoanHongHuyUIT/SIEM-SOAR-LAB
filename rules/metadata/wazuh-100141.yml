@@ -24,7 +24,7 @@ expected_fp: >
   Atomic T1543.002 #1 unit (/usr/bin/bash under the Atomic harness), so who-data does not separate them. Packages
   install their units under /lib/systemd/system, outside this rule.
 tests:
-  - name: unit added (Atomic T1543.002 #1 on the lab)
+  - name: "unit added (Atomic T1543.002 #1 on the lab)"
     expect: match
     fim: {path: /etc/systemd/system/art-systemd-service.service, type: added}
   - name: a unit shipped by a package (not under /etc)
