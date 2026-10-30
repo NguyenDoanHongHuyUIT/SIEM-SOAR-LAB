@@ -33,7 +33,9 @@
   who-data → `wazuh-syscheckd` segfault (`segfault at d8 … error 6 in libc.so.6`, sig=11); dịch vụ agent vẫn
   `active`, log của agent không có dòng nào, FIM mù ~2 phút 46 giây (crash 03:07:25,7 → agent khởi động lại 03:10:12). Trùng khớp
   [wazuh/wazuh#40844](https://github.com/wazuh/wazuh/issues/40844) (đang mở; báo trên 4.14.9 và 4.14.10-rc1, lab chạy
-  4.14.8). Theo issue, xóa rule từ bên ngoài (`auditctl -D`, `augenrules --load`) là tác nhân, nên kẻ có quyền root có thể tắt FIM theo cách này (trên lab mới thấy với `augenrules --load`). Đã làm: script cài agent và cleanup
+  4.14.8). Theo issue, xóa rule từ bên ngoài (`auditctl -D`, `augenrules --load`) là tác nhân, nên kẻ có quyền root có thể tắt FIM theo cách này (trên lab mới thấy với `augenrules --load`; lượt Atomic `auditctl -D` ngày 30/10 05:00:44 không crash: alert của
+  sensor trong 05:00:30–05:04 chỉ có rule 517 "Audit rules removed" ×6 và "Max rules reload retries" ×2, không có
+  80711; một lượt nên không suy ra được tần suất). Đã làm: script cài agent và cleanup
   của kịch bản dừng agent trước khi nạp lại rule (cách né trong issue), cleanup kiểm `wazuh-syscheckd is running`;
   rule **100148** (level 12) ghi alert khi một daemon Wazuh kết thúc bởi tín hiệu sinh core dump (SIGSEGV/SIGABRT…) lúc audit đang bật (bản ghi ANOM_ABEND; rule chính thức 80711 level 10 không thuộc nhóm SIEMSOAR). Đang **shadow**: chỉ ghi alert, chưa ai được báo cho tới khi promote. Không bắt được: SIGKILL/SIGTERM/OOM, crash khi audit đã tắt, crash của chính logcollector/agentd (tiến trình gửi bản ghi). Kịch bản `host-health-fim-crash` tạo đúng sự cố này (kèm một tiến trình không phải Wazuh làm mẫu âm).
 * Cảnh báo `indexer-connector` ("No available server") trong `ossec.log` của manager xuất hiện **khi khởi động**: manager

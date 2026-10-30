@@ -25,6 +25,8 @@ cleanup:
 expect: []                # no rule: the records equal a benign `augenrules --load` run with the agent up (2026-10-30)
 # `auditctl -D` under a running syscheckd may segfault it (wazuh/wazuh#40844 lists it as a trigger; not observed on the
 # lab for -D): 100148 would then show as unplanned in this run; it is exercised by host-health-fim-crash instead.
+# Run run-202610300500-host-audit-delete-rules-dc87 (2026-10-30 05:00:44): the sensor's alerts 05:00:30-05:04 were
+# rule 517 only ("Audit rules removed" x6, "Max rules reload retries" x2), no 80711, no 100148. One run: no crash rate.
 settle_seconds: 120
 notes: >
   Observation of T1685.004 #1. The same CONFIG_CHANGE remove_rule records come from a benign rule reload
