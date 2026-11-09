@@ -10,7 +10,7 @@ data "aws_iam_policy_document" "ec2_trust" {
 
 locals {
   account_id = data.aws_caller_identity.me.account_id
-  region     = data.aws_region.current.name
+  region     = data.aws_region.current.region
 }
 
 data "aws_caller_identity" "me" {}

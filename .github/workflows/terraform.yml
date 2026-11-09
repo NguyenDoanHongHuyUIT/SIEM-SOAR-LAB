@@ -16,7 +16,6 @@ on:
 permissions:
   id-token: write
   contents: read
-  pull-requests: write
 
 concurrency:
   group: terraform-lab # never run two plans/applies against the same state
@@ -60,8 +59,9 @@ jobs:
       - name: Plan (lab plane keeps its current on/off state)
         id: plan
         run: |
-          # `output lab` fails while the lab plane has never been created: that means false (an empty value would not)
-          LAB=$( (terraform -chdir=$TF_DIR output -json lab 2>/dev/null || echo null) | jq -r 'if . == null then "false" else "true" end')
+          # Decided from the state and fail closed: a state read error fails the step (pipefail) instead of reading as
+          # "lab off", which would plan, and on apply destroy, the on-demand plane. No state at all (first run) = off
+          LAB=$(terraform -chdir=$TF_DIR state pull | jq -rn 'first(inputs) // {} | any(.resources[]?; .module // "" | startswith("module.lab["))')
           terraform -chdir=$TF_DIR plan -input=false -no-color -var "lab_enabled=$LAB" | tee plan.txt
       - name: Summarise plan
         if: always()
@@ -94,7 +94,8 @@ jobs:
         run: |
           INPUT="$LAB_INPUT"
           if [ "$INPUT" = "keep" ]; then
-            INPUT=$( (terraform -chdir=$TF_DIR output -json lab 2>/dev/null || echo null) | jq -r 'if . == null then "false" else "true" end')
+            # same fail-closed check as the plan job: only "no module.lab resource in a readable state" means off
+            INPUT=$(terraform -chdir=$TF_DIR state pull | jq -rn 'first(inputs) // {} | any(.resources[]?; .module // "" | startswith("module.lab["))')
           fi
           terraform -chdir=$TF_DIR apply -input=false -auto-approve -var "lab_enabled=$INPUT"
           echo "LAB_ENABLED=$INPUT" >> "$GITHUB_ENV"

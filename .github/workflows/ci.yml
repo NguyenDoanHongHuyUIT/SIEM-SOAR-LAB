@@ -53,6 +53,7 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           TITLE: ${{ github.event.pull_request.title }}
+        # a "Revert ..." PR may only undo commits of the base it reverts (`This reverts commit <sha>`); see lifecycle_check
         run: |
           REVERT=""
           case "$TITLE" in Revert*) REVERT="--allow-revert" ;; esac
@@ -155,6 +156,19 @@ jobs:
           shellcheck -S warning wazuh/bootstrap_manager.sh suricata/bootstrap_sensor.sh scripts/deploy_rules.sh \
             agent/install_wazuh_agent.sh agent/bootstrap_target.sh \
             wazuh/integrations/custom-eventbridge
+
+  secret-scan:
+    name: secret scan (gitleaks on the checked-out tree)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Official image pinned by digest (= v8.21.2), default rule set; fails on any finding. --redact: the Actions log of
+      # a public repository is public, a finding must not print the secret it found
+      - name: gitleaks
+        run: >-
+          docker run --rm -v "$PWD:/repo:ro"
+          zricethezav/gitleaks@sha256:0e99e8821643ea5b235718642b93bb32486af9c8162c8b8731f7cbdc951a7f46
+          dir /repo --redact --no-banner --exit-code 1
 
   terraform-validate:
     runs-on: ubuntu-latest

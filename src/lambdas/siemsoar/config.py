@@ -61,7 +61,7 @@ def settings() -> Settings:
         breaker_limit=_int("BREAKER_LIMIT", 3),
         breaker_window=_int("BREAKER_WINDOW_SECONDS", 3600),
         stop_risk_threshold=_int("STOP_RISK_THRESHOLD", 85),
-        dry_run=_env("DRY_RUN", "false").lower() == "true",
+        dry_run=_env("DRY_RUN", "true").strip().lower() != "false",  # fail safe: only an explicit "false" acts
         iam_target_prefix=_env("IAM_TARGET_PREFIX", "lab-"),
         protected_tag=_env("PROTECTED_TAG", "siemsoar:protected"),
         zone_tag=_env("ZONE_TAG", "siemsoar:zone"),

@@ -19,6 +19,8 @@ __pycache__/
 # generated
 reports/
 dist/
+# tools.export_evidence default output: account ids, resource ids and case data of the live lab
+evidence-export/
 .terraform.lock.hcl
 # stray build artifacts (never commit wheels/tarballs: pin them in requirements-dev.txt instead)
 *.whl
