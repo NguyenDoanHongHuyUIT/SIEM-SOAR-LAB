@@ -1,19 +1,13 @@
-# Secrets are created as placeholders and the real values are set out of band:
+# The Slack secrets are not Terraform resources: `value` + ignore_changes only hid the diff, every refresh read the
+# decrypted value back into state, and the write-only `value_wo` would overwrite the real value on the first apply
+# (its version going from unset to 1 is an update). They are set out of band (docs/runbook.md):
 #   aws ssm put-parameter --name /siemsoar/slack/bot_token --type SecureString --overwrite --value xoxb-...
-# The placeholder goes through the write-only `value_wo`, so the parameter value is never stored in Terraform state, not
-# even after a refresh (`value` + ignore_changes only hid the diff: every refresh read the decrypted real value back into
-# state). Terraform writes `value_wo` only when `value_wo_version` changes: keep it at 1, or the next apply overwrites
-# the real value with the placeholder.
-locals {
-  slack_secure_params = toset(["bot_token", "signing_secret"])
-}
-
-resource "aws_ssm_parameter" "slack_secure" {
-  for_each         = local.slack_secure_params
-  name             = "/${var.name_prefix}/slack/${each.key}"
-  type             = "SecureString"
-  value_wo         = "CHANGE_ME"
-  value_wo_version = 1
+# Until they exist Slack is "not configured" and SNS email carries the notices.
+removed {
+  from = aws_ssm_parameter.slack_secure
+  lifecycle {
+    destroy = false # keep the parameters on AWS, forget them in state
+  }
 }
 
 resource "aws_ssm_parameter" "slack_approvers" {

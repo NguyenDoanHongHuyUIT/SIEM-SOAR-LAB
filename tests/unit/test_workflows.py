@@ -81,21 +81,19 @@ def test_workflows_run_a_terraform_version_the_configuration_accepts():
     assert all(version(pin)[:len(version(need))] >= version(need) for pin in pins), (need, pins)
 
 
-def test_terraform_never_stores_a_secure_string_value_in_state():
-    """`value` + ignore_changes still refreshed the decrypted Slack token into the state (seen in the live state).
-    Every SecureString Terraform creates takes its placeholder through the write-only `value_wo`; a fixed
-    `value_wo_version` and no ignore_changes on it, so the placeholder is written on create only."""
+def test_terraform_manages_no_secure_string():
+    """`value` + ignore_changes still refreshed the decrypted Slack token into the state (seen in the live state), and
+    `value_wo` would write its placeholder over the real value on the first apply. Terraform must not manage any
+    SecureString, and the parameters that were in state are forgotten, not destroyed."""
     import re
-    blocks = []
+    text = ""
     for tf in (ROOT / "infra").rglob("*.tf"):
-        if ".terraform" in tf.parts:
-            continue
-        blocks += re.findall(r'resource "aws_ssm_parameter" "\w+" \{\n(.*?)\n\}', tf.read_text(encoding="utf-8"), re.S)
-    secure = [b for b in blocks if '"SecureString"' in b]
-    assert secure
-    for b in secure:
-        assert re.search(r"^\s+value_wo\s+=", b, re.M) and re.search(r"^\s+value_wo_version\s+= 1$", b, re.M), b
-        assert not re.search(r"^\s+value\s+=", b, re.M) and "ignore_changes" not in b, b
+        if ".terraform" not in tf.parts:
+            text += tf.read_text(encoding="utf-8") + "\n"
+    assert '"SecureString"' not in text
+    assert "value_wo" not in re.sub(r"^\s*#.*$", "", text, flags=re.M)
+    removed = re.search(r"removed \{\n\s+from = aws_ssm_parameter\.slack_secure\n(.*?)\n\}", text, re.S)
+    assert removed and re.search(r"destroy = false", removed.group(1))
 
 
 def test_plan_role_writes_only_the_state_lock_file():

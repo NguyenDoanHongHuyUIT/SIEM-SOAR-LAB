@@ -50,7 +50,7 @@ jobs:
       - run: pip install boto3
       - uses: hashicorp/setup-terraform@v4
         with:
-          terraform_version: "1.14.9"
+          terraform_version: "1.10.5"
           terraform_wrapper: false
       - run: terraform -chdir=$TF_DIR init -input=false -backend-config="bucket=${{ vars.TFSTATE_BUCKET }}" -backend-config="region=$AWS_REGION"
 
