@@ -86,22 +86,29 @@ def _verify(case, event, store):
     cid, plan, dry = case["case_id"], case["response_plan"], dry_run_of(event)
     pre, _ = evidence.get_json(cid, "pre_action_state")
     if plan["type"] == PLAN_EC2:
-        restored, summary = response.ec2_matches_state(plan["params"]["instance_id"], pre)
-        ok = dry or restored
+        # execute restarts the instance only if containment stopped it while it was running: then it must be up again
+        restarted = bool(case.get("instance_stopped")) and pre.get("state") == "running"
+        restored, summary = response.ec2_matches_state(plan["params"]["instance_id"], pre, expect_running=restarted)
     else:
-        keys = response.list_keys(pre["user_name"])
-        want_fp = _verdict(event) == "false_positive"
-        ok = dry or (keys.get(pre["access_key_id"]) == pre["keys"].get(pre["access_key_id"]) if want_fp
-                     else pre["access_key_id"] not in keys)
-        summary = f"keys now {keys}"
-    if not ok:
+        user, key = pre["user_name"], pre["access_key_id"]
+        keys = response.list_keys(user)
+        if _verdict(event) == "false_positive":
+            key_ok = keys.get(key) == pre["keys"].get(key)
+        else:  # rotated: the exposed key is gone and its replacement is live
+            new_key = ((case.get("restore_actions") or {}).get("rotation") or {}).get("new_access_key_id")
+            key_ok = key not in keys and keys.get(new_key) == "Active"
+        sessions_revoked = response.has_user_revoke_policy(user)
+        restored = key_ok and not sessions_revoked
+        summary = f"keys now {keys}" + ("; session revocation policy still attached" if sessions_revoked else "")
+    if not (dry or restored):
         raise VerificationFailed(summary)
+    verification = "dry_run" if dry else "ok"  # a dry run restored nothing, so it verifies nothing
     now = iso()
     isolated = parse_iso(case.get("isolated_at"))
-    store.transition(cid, Status.RESTORED, detail={"summary": summary, "dry_run": dry},
-                     verdict=_verdict(event),
+    store.transition(cid, Status.RESTORED, detail={"summary": summary, "dry_run": dry, "verification": verification},
+                     verdict=_verdict(event), restore_verification=verification,
                      restore_seconds=round((parse_iso(now) - isolated).total_seconds(), 2) if isolated else None)
-    return {"verified": True, "summary": summary}
+    return {"verified": verification == "ok", "verification": verification, "summary": summary}
 
 
 OPS = {"validate": _validate, "execute": _execute, "verify": _verify}

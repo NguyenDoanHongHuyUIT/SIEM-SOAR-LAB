@@ -77,6 +77,8 @@ def approval_email(case: dict, gate: str) -> str:
 def notify_case(case: dict, kind: str, gate: str | None = None, extra: str = "") -> dict:
     titles = {"approval": ":warning: Approval required", "restore": ":shield: Restore decision required",
               "isolated": ":lock: Containment verified", "restored": ":white_check_mark: Restored",
+              "isolated_dry_run": ":test_tube: Dry run: nothing was contained",
+              "restored_dry_run": ":test_tube: Dry run: nothing was restored",
               "expired": ":hourglass: Approval expired", "failed": ":x: Workflow failed (fail-safe)",
               "blocked": ":no_entry: Restore blocked", "acknowledged": ":ballot_box_with_check: Acknowledged",
               "dismissed": ":broom: Dismissed as false positive"}

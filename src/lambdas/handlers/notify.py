@@ -10,7 +10,7 @@ from siemsoar.notifier import notify_case
 from siemsoar.states import Status
 from siemsoar.store import InvalidTransition
 
-from handlers._common import config_of, load, state_of
+from handlers._common import config_of, dry_run_of, load, state_of
 
 
 def _extra(kind: str, case: dict, state: dict) -> str:
@@ -18,8 +18,12 @@ def _extra(kind: str, case: dict, state: dict) -> str:
     if kind == "isolated":
         v = steps.get("verify", {}).get("out", {})
         evidence_key = case.get("pre_action_state_ref", {}).get("key", "-")
+        if v.get("verification") == "dry_run":
+            return f"DRY RUN: nothing was changed, so nothing is verified. Now: {v.get('summary', '-')}"
         return f"Verified: {v.get('summary', 'containment verified')}. Evidence: {evidence_key}"
     if kind == "restored":
+        if case.get("restore_verification") == "dry_run":
+            return f"Verdict: {case.get('verdict', '?')}. DRY RUN: nothing was restored or verified."
         return f"Verdict: {case.get('verdict', '?')}. Restore verified."
     if kind == "blocked":
         return "Reasons: " + "; ".join(steps.get("validate_restore", {}).get("out", {}).get("reasons", []))
@@ -29,7 +33,7 @@ def _extra(kind: str, case: dict, state: dict) -> str:
     if kind == "expired":
         return "No decision before the approval timeout. No change was made."
     if kind in {"dismissed", "acknowledged"}:
-        return f"By {case.get('approver', 'n/a')}"
+        return f"By {case.get('approver', 'n/a')}" + (f". Reason: {case['fp_reason']}" if case.get("fp_reason") else "")
     return ""
 
 
@@ -54,7 +58,9 @@ def handler(event, context=None):
         store.audit(case["case_id"], f"notified:{gate}", "system", sent)
         return sent
     kind = event["kind"]
-    sent = notify_case(case, kind, extra=_extra(kind, case, state))
+    # a dry run changed nothing: the notice must not carry the "Containment verified" / "Restored" title
+    shown = f"{kind}_dry_run" if kind in {"isolated", "restored"} and dry_run_of(event) else kind
+    sent = notify_case(case, shown, extra=_extra(kind, case, state))
     store.audit(case["case_id"], f"notified:{kind}", "system", sent)
     return sent
 

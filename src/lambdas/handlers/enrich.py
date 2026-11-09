@@ -8,7 +8,7 @@ from siemsoar import aws, response
 from siemsoar.config import settings
 from siemsoar.schema import PLAN_EC2, PLAN_IAM, PLAN_NONE, compute_risk
 
-from handlers._common import config_of, load
+from handlers._common import config_of, dry_run_of, load
 
 NOTIFY_ONLY = {"type": PLAN_NONE, "params": {}}
 
@@ -98,7 +98,9 @@ def handler(event, context=None):
 
     risk = compute_risk(case["severity"], enrichment.get("criticality", "medium"), case.get("alert_count", 1),
                         enrichment.get("internet_exposed", False))
-    updates = {"enrichment": enrichment, "risk_score": risk, "response_plan": plan, "resource_exists": exists}
+    # dry_run is frozen in the execution config; kept on the case so evaluation can tell dry-run cases apart
+    updates = {"enrichment": enrichment, "risk_score": risk, "response_plan": plan, "resource_exists": exists,
+               "dry_run": dry_run_of(event)}
     if note:
         updates["plan_note"] = note + (" (sample finding)" if case.get("sample") else "")
     store.update_case(case["case_id"], **updates)

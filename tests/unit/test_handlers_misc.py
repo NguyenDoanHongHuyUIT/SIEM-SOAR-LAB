@@ -246,3 +246,60 @@ def test_dry_run_is_on_unless_explicitly_turned_off(monkeypatch, value, dry):
         monkeypatch.setenv("DRY_RUN", value)
     assert config.settings().dry_run is dry
     assert config.settings().workflow_config()["dry_run"] is dry
+
+
+# ------------------------------------------------------------------ Slack's 3 s ack window
+class FakeLambda:
+    def __init__(self, error=None):
+        self.invoked, self.error = [], error
+
+    def invoke(self, **kwargs):
+        if self.error:
+            raise self.error
+        self.invoked.append(kwargs)
+
+
+def test_slack_ack_makes_no_slack_call_and_the_card_is_replaced_by_the_follow_up(store, sfn, notified, monkeypatch):
+    from siemsoar import aws
+    monkeypatch.setenv("AWS_LAMBDA_FUNCTION_NAME", "siemsoar-slack_interact")
+    http, replaced, follow_up = [], [], FakeLambda()
+    monkeypatch.setattr(slack, "_request", lambda *a, **k: http.append(a) or {"ok": True})
+    monkeypatch.setattr(slack, "respond", lambda url, text, blocks: replaced.append((url, text)))
+    monkeypatch.setattr(notifier, "close_card", lambda case, text: http.append("chat.update"))  # the blocking path
+    monkeypatch.setattr(aws, "fast_client", lambda service: follow_up)
+    res = slack_interact.handler(_request(notified, "approve"))
+    assert res["statusCode"] == 200 and not http and not replaced  # no Slack HTTP call before the ack
+    assert store.get_case(notified)["status"] == "APPROVED" and len(sfn.success) == 1  # the decision itself is complete
+    [call] = follow_up.invoked
+    assert call["FunctionName"] == "siemsoar-slack_interact" and call["InvocationType"] == "Event"
+    slack_interact.handler(json.loads(call["Payload"]))
+    assert replaced == [("https://hooks.slack.com/actions/x", f"{notified}: approve")]
+    again = json.loads(slack_interact.handler(_request(notified, "approve"))["body"])  # still single use
+    assert again.get("text") and len(sfn.success) == 1 and len(follow_up.invoked) == 1
+
+
+def test_slack_ack_is_not_lost_when_the_follow_up_cannot_be_scheduled(store, sfn, notified, monkeypatch):
+    from siemsoar import aws
+    monkeypatch.setenv("AWS_LAMBDA_FUNCTION_NAME", "siemsoar-slack_interact")
+    monkeypatch.setattr(aws, "fast_client", lambda service: FakeLambda(error=RuntimeError("lambda api down")))
+    assert slack_interact.handler(_request(notified, "dismiss"))["statusCode"] == 200
+    assert store.get_case(notified)["status"] == "DISMISSED" and len(sfn.success) == 1
+
+
+def test_slack_follow_up_uses_chat_update_without_a_response_url(store, sfn, notified, monkeypatch):
+    closed = []
+    monkeypatch.setattr(notifier, "close_card", lambda case, text: closed.append((case["case_id"], text)))
+    slack_interact.handler({"close_card": {"case_id": notified, "decision": "approve", "user": "U1", "response_url": ""}})
+    assert closed == [(notified, "*approve* by <@U1>")]
+
+
+# ------------------------------------------------------------------ dismiss reason
+def test_a_dismiss_reason_is_kept_on_the_case_and_shown_in_the_notice(store, sfn, notified, monkeypatch):
+    from siemsoar import decisions
+    sent = []
+    monkeypatch.setattr(notifier, "sns_publish", lambda subject, text: sent.append(text))
+    decisions.apply_decision(store, notified, "approval", "dismiss", actor="cli:U1", channel="cli", reason=" benign_admin ")
+    assert store.get_case(notified)["fp_reason"] == "benign_admin"
+    notify.handler({"op": "info", "kind": "dismissed", "state": {"case_id": notified, "config": {}}})
+    assert "Reason: benign_admin" in sent[-1] and "By cli:U1" in sent[-1]
+    assert "notified:dismissed" in [a["action"] for a in store.list_audit(notified)]

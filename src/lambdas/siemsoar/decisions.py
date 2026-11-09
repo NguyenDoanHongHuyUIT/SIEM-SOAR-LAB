@@ -21,7 +21,12 @@ class DecisionRejected(Exception):
 
 
 def apply_decision(store: CaseStore, case_id: str, gate: str, decision: str, actor: str,
-                   channel: str = "slack", detail: dict | None = None) -> dict:
+                   channel: str = "slack", detail: dict | None = None, reason: str | None = None,
+                   update_card: bool = True) -> dict:
+    """`reason`: optional free text (why a false positive), kept in the audit and, for dismiss / restore_fp, on the case
+    as `fp_reason` (fed to `soarctl feedback`). `update_card=False`: the caller replaces the Slack card itself (the Slack
+    callback does, after it has answered Slack), so no chat.update call delays that answer."""
+    reason = (reason or "").strip()[:200] or None
     case = store.get_case(case_id)
     plan = case.get("response_plan", {}).get("type", "none")
 
@@ -36,9 +41,11 @@ def apply_decision(store: CaseStore, case_id: str, gate: str, decision: str, act
         if decision == "acknowledge" and plan != "none":
             raise DecisionRejected("this case has a response plan; use approve or dismiss")
         target = APPROVAL_DECISIONS[decision]
+        # the reason is written with the status (one conditional write), before the workflow can notify the dismissal
+        attrs = {"fp_reason": reason} if reason and decision == "dismiss" else {}
         try:  # conditional on NOTIFIED: the first click wins, later clicks fail here
             store.transition(case_id, target, actor=actor, detail={"channel": channel, "decision": decision},
-                             approver=actor)
+                             approver=actor, **attrs)
         except InvalidTransition as err:
             # Same decision, token still open: an earlier attempt moved the case but could not reach Step Functions
             # (token was released). Resume it; the single-use token below still lets exactly one delivery through.
@@ -65,8 +72,12 @@ def apply_decision(store: CaseStore, case_id: str, gate: str, decision: str, act
         if code not in {"TaskTimedOut", "InvalidToken", "TaskDoesNotExist"}:
             store.release_token(case_id, gate)  # transient: allow a retry
         raise DecisionRejected(f"workflow no longer waiting ({code})") from err
-    store.audit(case_id, f"decision:{gate}:{decision}", actor, {"channel": channel, **(detail or {})})
-    from .notifier import close_card  # late import: notifier pulls the Slack/SNS clients
+    if reason and decision == "restore_fp":
+        store.update_case(case_id, fp_reason=reason)
+    store.audit(case_id, f"decision:{gate}:{decision}", actor,
+                {"channel": channel, **({"reason": reason} if reason else {}), **(detail or {})})
+    if update_card:
+        from .notifier import close_card  # late import: notifier pulls the Slack/SNS clients
 
-    close_card(store.get_case(case_id), f"*{decision}* by `{actor}` via {channel}")
+        close_card(store.get_case(case_id), f"*{decision}* by `{actor}` via {channel}")
     return output

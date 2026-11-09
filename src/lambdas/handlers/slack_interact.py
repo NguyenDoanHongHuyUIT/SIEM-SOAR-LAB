@@ -9,8 +9,9 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 
-from siemsoar import slack
+from siemsoar import aws, notifier, slack
 from siemsoar.config import settings
 from siemsoar.decisions import DecisionRejected, apply_decision
 from siemsoar.ssm import get_param
@@ -27,7 +28,30 @@ def _ephemeral(text: str) -> dict:
     return _resp(200, {"response_type": "ephemeral", "text": text})
 
 
+def _defer_close_card(job: dict) -> None:
+    """Slack wants the ack within 3 s and Lambda answers only when the handler returns, so the Slack HTTP calls that
+    replace the card run in a second, asynchronous invocation of this function. The decision (single-use token, Step
+    Functions callback) is already complete here. Best effort: a card left with its buttons only rejects a later click."""
+    try:
+        aws.fast_client("lambda").invoke(FunctionName=os.environ["AWS_LAMBDA_FUNCTION_NAME"], InvocationType="Event",
+                                         Payload=json.dumps({"close_card": job}).encode())
+    except Exception:  # noqa: BLE001 - the decision stands and Slack must still get its ack
+        log.warning("could not schedule the slack card update", exc_info=True)
+
+
+def _close_card(job: dict) -> dict:
+    case_id, decision = job["case_id"], job["decision"]
+    text = f"*{decision}* by <@{job['user']}>"
+    if job["response_url"].startswith(slack.RESPONSE_URL_PREFIX):
+        slack.respond(job["response_url"], f"{case_id}: {decision}", slack.decided_blocks(case_id, text))
+    else:
+        notifier.close_card(CaseStore().get_case(case_id), text)
+    return {}
+
+
 def handler(event, context=None):
+    if "close_card" in event:  # our own follow-up (_defer_close_card): an API Gateway event has no such key
+        return _close_card(event["close_card"])
     prefix = settings().name_prefix
     headers = {k.lower(): v for k, v in (event.get("headers") or {}).items()}
     body = event.get("body") or ""
@@ -59,9 +83,9 @@ def handler(event, context=None):
         return _ephemeral(":no_entry: You are not an authorised approver.")
 
     try:
-        apply_decision(store, case_id, gate, decision, actor=f"slack:{user}", channel="slack")
+        apply_decision(store, case_id, gate, decision, actor=f"slack:{user}", channel="slack", update_card=False)
     except (DecisionRejected, CaseNotFound) as err:
         return _ephemeral(f":warning: {err}")
-    slack.respond(payload.get("response_url", ""), f"{case_id}: {decision}",
-                  slack.decided_blocks(case_id, f"*{decision}* by <@{user}>"))
+    _defer_close_card({"case_id": case_id, "decision": decision, "user": user,
+                       "response_url": payload.get("response_url", "")})
     return _resp(200)

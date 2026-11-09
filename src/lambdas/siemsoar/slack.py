@@ -13,6 +13,7 @@ import urllib.request
 
 log = logging.getLogger("slack")
 SIG_TOLERANCE = 300
+RESPONSE_URL_PREFIX = "https://hooks.slack.com/"
 
 SEV_EMOJI = {"critical": ":rotating_light:", "high": ":red_circle:", "medium": ":large_orange_circle:",
              "low": ":large_yellow_circle:", "info": ":white_circle:"}
@@ -132,7 +133,7 @@ def update_message(bot_token: str, channel: str, ts: str, text: str, blocks: lis
 
 def respond(response_url: str, text: str, blocks: list[dict]) -> None:
     """Replace the original card after a decision (best effort)."""
-    if not response_url.startswith("https://hooks.slack.com/"):
+    if not response_url.startswith(RESPONSE_URL_PREFIX):
         return
     try:
         _request(response_url, {"replace_original": True, "text": text, "blocks": blocks},

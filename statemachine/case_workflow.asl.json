@@ -103,7 +103,7 @@
         {
           "Variable": "$.approval.decision",
           "StringEquals": "dismiss",
-          "Next": "DoneDismissed"
+          "Next": "NotifyDismissed"
         }
       ]
     },
@@ -143,10 +143,88 @@
           "Next": "FailSafe"
         }
       ],
+      "Next": "NotifyAcknowledged"
+    },
+    "NotifyAcknowledged": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${fn_notify}",
+        "Payload": {
+          "op": "info",
+          "state.$": "$",
+          "kind": "acknowledged"
+        }
+      },
+      "ResultSelector": {
+        "out.$": "$.Payload"
+      },
+      "ResultPath": "$.steps.notify_acknowledged",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 4,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.notify_error",
+          "Next": "DoneAcknowledged"
+        }
+      ],
       "Next": "DoneAcknowledged"
     },
     "DoneAcknowledged": {
       "Type": "Succeed"
+    },
+    "NotifyDismissed": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${fn_notify}",
+        "Payload": {
+          "op": "info",
+          "state.$": "$",
+          "kind": "dismissed"
+        }
+      },
+      "ResultSelector": {
+        "out.$": "$.Payload"
+      },
+      "ResultPath": "$.steps.notify_dismissed",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 4,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.notify_error",
+          "Next": "DoneDismissed"
+        }
+      ],
+      "Next": "DoneDismissed"
     },
     "DoneDismissed": {
       "Type": "Succeed"
@@ -852,6 +930,14 @@
           "IntervalSeconds": 2,
           "MaxAttempts": 4,
           "BackoffRate": 2.0
+        },
+        {
+          "ErrorEquals": [
+            "VerificationFailed"
+          ],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 5,
+          "BackoffRate": 2.0
         }
       ],
       "Catch": [
@@ -1119,6 +1205,14 @@
           ],
           "IntervalSeconds": 2,
           "MaxAttempts": 4,
+          "BackoffRate": 2.0
+        },
+        {
+          "ErrorEquals": [
+            "VerificationFailed"
+          ],
+          "IntervalSeconds": 5,
+          "MaxAttempts": 5,
           "BackoffRate": 2.0
         }
       ],

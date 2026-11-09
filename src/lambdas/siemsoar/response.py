@@ -201,13 +201,16 @@ def restore_ec2_from_state(instance_id: str, pre: dict, dry_run: bool = False, s
     return out
 
 
-def ec2_matches_state(instance_id: str, pre: dict) -> tuple[bool, str]:
-    """(restored?, summary): groups as saved on every interface, no isolation tag, no session revocation left."""
+def ec2_matches_state(instance_id: str, pre: dict, expect_running: bool = False) -> tuple[bool, str]:
+    """(restored?, summary): groups as saved on every interface, no isolation tag, no session revocation left, and
+    the instance running again when the restore restarted it (`expect_running`)."""
     cur = describe_instance(instance_id)
     expected = {n["id"]: n["groups"] for n in pre.get("network_interfaces", [])}
     groups_ok = (eni_groups(cur) == expected) if expected else cur["security_groups"] == pre["security_groups"]
     ok = groups_ok and CASE_TAG not in cur["tags"] and not (pre.get("role_name") and has_revoke_policy(pre["role_name"]))
-    return ok, f"security groups {expected or cur['security_groups']} restored (now {eni_groups(cur)})"
+    ok = ok and (not expect_running or cur["state"] == "running")  # `pending` can still fall back to stopped
+    return ok, (f"security groups expected {expected or cur['security_groups']}, now {eni_groups(cur)}, "
+                f"instance {cur['state']}")
 
 
 def snapshot_volumes(instance_id: str, case_id: str, volumes: list[str], dry_run: bool = False) -> list[str]:
@@ -221,6 +224,22 @@ def snapshot_volumes(instance_id: str, case_id: str, volumes: list[str], dry_run
                 {"Key": "siemsoar:case", "Value": case_id}, {"Key": "siemsoar:source-instance", "Value": instance_id}]}])
         ids.append(snap["SnapshotId"])
     return ids
+
+
+def describe_snapshots(snapshot_ids: list[str]) -> dict[str, dict]:
+    """{snapshot id: {"state", "case"}} for the given ids (`case` is the siemsoar:case tag). Empty when any id does not
+    exist: EC2 fails the whole call in that case, and the caller compares the ids it got back with the ones it asked."""
+    if not snapshot_ids:
+        return {}
+    try:
+        snaps = aws.client("ec2").describe_snapshots(SnapshotIds=list(snapshot_ids))["Snapshots"]
+    except ClientError as err:
+        if err.response["Error"]["Code"] == "InvalidSnapshot.NotFound":
+            return {}
+        raise
+    return {s["SnapshotId"]: {"state": s["State"],
+                              "case": {t["Key"]: t["Value"] for t in s.get("Tags", [])}.get("siemsoar:case")}
+            for s in snaps}
 
 
 def set_instance_running(instance_id: str, running: bool, dry_run: bool = False) -> dict:
@@ -258,12 +277,23 @@ def restore_role_sessions(role_name: str, dry_run: bool = False) -> dict:
     return {"role": role_name, "changed": not dry_run}
 
 
-def has_revoke_policy(role_name: str) -> bool:
+def _policy_present(call, **kwargs) -> bool:
+    """Only NoSuchEntity means 'absent': AccessDenied or throttling must surface, not read as 'no revocation'."""
     try:
-        aws.client("iam").get_role_policy(RoleName=role_name, PolicyName=REVOKE_POLICY)
+        call(PolicyName=REVOKE_POLICY, **kwargs)
         return True
-    except ClientError:
-        return False
+    except ClientError as err:
+        if err.response["Error"]["Code"] == "NoSuchEntity":
+            return False
+        raise
+
+
+def has_revoke_policy(role_name: str) -> bool:
+    return _policy_present(aws.client("iam").get_role_policy, RoleName=role_name)
+
+
+def has_user_revoke_policy(user: str) -> bool:
+    return _policy_present(aws.client("iam").get_user_policy, UserName=user)
 
 
 def list_keys(user: str) -> dict[str, str]:
