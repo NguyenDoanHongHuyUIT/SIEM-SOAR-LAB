@@ -41,6 +41,7 @@ from siemsoar.util import parse_iso  # noqa: E402
 from simulation.catalog import case_in_run, merged_in_run  # noqa: E402
 
 GROUND_TRUTH_ACTOR = "sim:ground-truth"
+UNKNOWN_PLAN = "unknown"
 
 
 def manual_steps(case: dict) -> int:
@@ -178,13 +179,13 @@ def classify(cases: list[dict], runs: list[dict], canary_rules: frozenset[str] =
                         observed, "fn_detection" if e["source"] == "guardduty" else "fn_unverified")
                     b[key] += 1
             else:  # shadow rule: no case is expected, but only a rule that really fired proves the lifecycle works
+                # Not a case-layer TP or FN either way: no case was due. Counting shadow_missed as FN while shadow_ok is
+                # never a TP showed recall 0.0 for rules that fired in most runs (report 2026-10-30, 100100/100102).
+                # The miss is a detection-layer FN, scored in detection_quality.
                 if observed is True:
                     b["shadow_ok"] += 1
                 elif observed is False:
                     b["shadow_missed"] += 1  # the rule never alerted, not even in shadow
-                    if run.get("malicious", True):
-                        b["fn"] += 1
-                        b["fn_detection"] += 1
                 else:
                     b["shadow_unverified"] += 1  # nobody checked the SIEM: cannot call this a pass
     for b in rules.values():
@@ -379,27 +380,44 @@ def attack_coverage(rules_meta: dict, runs: list[dict], labels: dict, cases: lis
             "coverage_of_exercised": round(len(detected & exercised) / len(exercised), 3) if exercised else None}
 
 
-def baseline_comparison(baseline: list[dict], soar_case_to_contained: dict,
-                        soar_steps: list[int] | None = None) -> dict:
-    """Manual response vs SOAR, on the same interval: from the moment the detection is available (baseline: the
-    GuardDuty finding is created; SOAR: the case is created from it) to containment. Both include the human reaction
-    time (noticing + deciding); the SOAR number is NOT the approval-to-containment time, which would compare an
-    automated step with a whole manual response."""
-    secs = [_nonnegative_float(r["seconds_to_contain"], "seconds_to_contain") for r in baseline
-            if r.get("seconds_to_contain") not in (None, "")]
-    steps = [_nonnegative_float(r["manual_steps"], "manual_steps") for r in baseline
-             if r.get("manual_steps") not in (None, "")]
-    if not secs:
+def baseline_comparison(baseline: list[dict], soar_activity_to_contained: dict[str, dict],
+                        soar_steps: dict[str, list[int]] | None = None) -> dict:
+    """Manual response vs SOAR, on the same interval: from the activity the detector saw (baseline: the occurrence of
+    the GuardDuty finding; SOAR: the case's activity_time, the same clock as schema.normalize_guardduty) to containment.
+    Both include the detector's own delay and the human reaction time (noticing + deciding); the SOAR number is NOT the
+    approval-to-containment time, which would compare an automated step with a whole manual response, nor the
+    case-to-containment time, whose clock starts after the detector's delay.
+
+    Like with like: both sides are grouped by response plan (`plan` of a drill row, `response_plan.type` of a case).
+    Disabling a key in the IAM console and isolating an instance are different responses, so a plan is compared only
+    when both sides measured it; a side without data is reported as such, never filled in."""
+    base: dict[str, dict[str, list[float]]] = {}
+    for r in baseline:
+        if r.get("seconds_to_contain") in (None, ""):
+            continue
+        row = base.setdefault(r.get("plan") or UNKNOWN_PLAN, {"secs": [], "steps": []})
+        row["secs"].append(_nonnegative_float(r["seconds_to_contain"], "seconds_to_contain"))
+        if r.get("manual_steps") not in (None, ""):
+            row["steps"].append(_nonnegative_float(r["manual_steps"], "manual_steps"))
+    if not base:
         return {"available": False, "drills": 0,
                 "note": "no manual containment measured yet: needs console drills (docs/evaluation.md, Baseline)"}
-    base_p50 = percentile(secs, 50)
-    soar_p50 = soar_case_to_contained.get("p50")
-    return {"available": True, "drills": len(secs), "baseline_contain_p50_s": base_p50,
-            "soar_case_to_contained_p50_s": soar_p50, "soar_cases": soar_case_to_contained.get("n", 0),
-            "baseline_manual_steps_mean": round(statistics.fmean(steps), 1) if steps else None,
-            "soar_manual_steps": round(statistics.fmean(soar_steps), 1) if soar_steps else None,
-            "contain_time_delta_s": round(base_p50 - soar_p50, 2) if soar_p50 is not None else None,
-            "note": "both from detection available to containment, human reaction included"}
+    by_plan = {}
+    for plan in sorted(set(base) | {p for p, s in soar_activity_to_contained.items() if s.get("n")}):
+        b = base.get(plan, {"secs": [], "steps": []})
+        soar, steps = soar_activity_to_contained.get(plan) or {}, (soar_steps or {}).get(plan) or []
+        base_p50, soar_p50 = percentile(b["secs"], 50), soar.get("p50")
+        # `unknown` on both sides would pair two unrelated populations
+        comparable = plan != UNKNOWN_PLAN and base_p50 is not None and soar_p50 is not None
+        by_plan[plan] = {"drills": len(b["secs"]), "baseline_contain_p50_s": base_p50,
+                         "soar_cases": soar.get("n", 0), "soar_activity_to_contained_p50_s": soar_p50,
+                         "baseline_manual_steps_mean": round(statistics.fmean(b["steps"]), 1) if b["steps"] else None,
+                         "soar_manual_steps": round(statistics.fmean(steps), 1) if steps else None,
+                         "comparable": comparable,
+                         "contain_time_delta_s": round(base_p50 - soar_p50, 2) if comparable else None}
+    return {"available": True, "drills": sum(len(b["secs"]) for b in base.values()), "by_plan": by_plan,
+            "note": "both from the activity the detector saw to containment, detector delay and human reaction "
+                    "included; compared per response plan"}
 
 
 def window_headroom(cases: list[dict], runs: list[dict]) -> dict:
@@ -441,6 +459,62 @@ def in_scope(cases: list[dict], runs: list[dict], since: str | None) -> tuple[li
     return keep_c, keep_r
 
 
+def deployments_in_scope(deployments: list[dict], since: str | None) -> list[dict]:
+    """Rule releases deployed at or after `since`, the same measurement period as the cases and runs."""
+    if not since:
+        return deployments
+    start = parse_iso(since)
+    if start is None:
+        raise ValueError(f"--since must be an ISO timestamp, got {since!r}")
+    return [d for d in deployments if (t := parse_iso(d.get("deployed_at"))) and t >= start]
+
+
+def deployment_outcome(d: dict) -> str:
+    """tools/release.py writes deployment.json for every publish: also when the lab was off (every target
+    `skipped_lab_off`, or no target with --no-deploy) and when a host rejected the release (`failed`). Only `deployed`
+    (at least one target really took it) measures commit -> active on the lab; one with another target failed is
+    counted there too and reported apart (rule_releases.partial_failure)."""
+    statuses = {t.get("status") for t in d.get("targets") or []}
+    if "deployed" in statuses:
+        return "deployed"
+    return "failed" if "failed" in statuses else "lab_off"
+
+
+def activity_time(case: dict) -> datetime | None:
+    """When the activity behind this case happened. GuardDuty: the one that triggered this delivery (eventLastSeen,
+    kept in `extra.last_seen`); cases stored before the schema used it carry the first occurrence as event_time, hours
+    early for a recurring finding."""
+    last = parse_iso((case.get("extra") or {}).get("last_seen")) if case["source"] == "guardduty" else None
+    return last or parse_iso(case.get("event_time"))
+
+
+def plan_of(case: dict) -> str:
+    return (case.get("response_plan") or {}).get("type") or UNKNOWN_PLAN
+
+
+def dry_run(case: dict) -> bool:
+    """True when the case's response ran in dry-run: nothing changed in AWS, yet verify reports the containment as
+    done (contain._verify accepts dry). Read from `dry_run` on the case when it has one; otherwise from its audit
+    details (preflight_ok, status:ISOLATED, status:RESTORED), in `case["audit"]` as tools/export_evidence writes it and
+    main() loads it."""
+    if case.get("dry_run") is not None:
+        return bool(case["dry_run"])
+    return any((a.get("detail") or {}).get("dry_run") is True for a in case.get("audit") or [])
+
+
+RESPONSE_TIMES = ("containment_seconds", "evidence_seconds", "restore_seconds", "isolated_at")
+
+
+def harness_outcome(run: dict, cases: list[dict]) -> dict | None:
+    """For a robustness run whose harness raised: the case the run decided (actor `sim:<run_id>`), if any. With one,
+    the system did execute (e.g. robust-mid-failure 2026-10-18, run 851a: the case reached FAILED with the host left
+    contained, then the harness's own recovery step failed), which is not the same as a run that never started."""
+    case = next((c for c in cases if str(c.get("approver") or "") == f"sim:{run['run_id']}"), None)
+    if case is None:
+        return None
+    return {"case_id": case["case_id"], "status": case.get("status"), "safe_state": case.get("safe_state")}
+
+
 def failed_cases(cases: list[dict], runs: list[dict]) -> list[dict]:
     """Every case that ended FAILED, with its cause, so a count in the report is never read without one: a fault the
     robustness harness injected on purpose (approver sim:<robustness run>, InjectedFault) is not an operational
@@ -469,43 +543,65 @@ def compute_metrics(cases: list[dict], runs: list[dict], rules_meta: dict | None
     pipeline: dict[str, list[float]] = {}
     e2e: dict[str, list[float]] = {}
     for c in measured_cases:
-        # GuardDuty: the activity that triggered this delivery (eventLastSeen, kept in `extra.last_seen`); cases stored
-        # before the schema used it carry the first occurrence as event_time, hours early for a recurring finding
-        last = parse_iso((c.get("extra") or {}).get("last_seen")) if c["source"] == "guardduty" else None
-        ev, cr = last or parse_iso(c.get("event_time")), parse_iso(c.get("created_at"))
+        ev, cr = activity_time(c), parse_iso(c.get("created_at"))
         if ev and cr:
             pipeline.setdefault(c["source"], []).append(max(0.0, (cr - ev).total_seconds()))
         run, exp = attribute(c, runs)
         if run and exp and cr:
             e2e.setdefault(c["source"], []).append(max(0.0, (cr - parse_iso(run["started_at"])).total_seconds()))
     total_alerts = sum(int(c.get("alert_count", 1)) for c in measured_cases)
-    containment = summary([c["containment_seconds"] for c in cases if c.get("containment_seconds") is not None])
-    contained = [c for c in cases if c.get("isolated_at") and not c.get("decided_by_assistant")]
-    case_to_contained = summary([round((parse_iso(c["isolated_at"]) - parse_iso(c["created_at"])).total_seconds(), 2)
-                                 for c in contained if parse_iso(c.get("created_at"))])
+    # response times are measured on real responses only: a dry run changes nothing in AWS but verify passes it
+    dry = [c for c in cases if dry_run(c) and any(c.get(k) is not None for k in RESPONSE_TIMES)]
+    live = [c for c in cases if not dry_run(c)]
+    plans = sorted({plan_of(c) for c in live if c.get("containment_seconds") is not None or c.get("isolated_at")})
+    containment = summary([c["containment_seconds"] for c in live if c.get("containment_seconds") is not None])
+    # `decided_by_assistant`: set by hand in DynamoDB on the case an AI assistant approved through the CLI before the
+    # CLI required a human approver (commit 25af333). Its approval wait is not a human's, so it is left out (and named
+    # in the report) wherever the approval is part of the interval.
+    by_assistant = [c for c in live if c.get("isolated_at") and c.get("decided_by_assistant")]
+    contained = [c for c in live if c.get("isolated_at") and not c.get("decided_by_assistant")]
+
+    def to_contained(group: list[dict], start=lambda c: parse_iso(c.get("created_at"))) -> dict:
+        return summary([round((parse_iso(c["isolated_at"]) - start(c)).total_seconds(), 2) for c in group if start(c)])
+    case_to_contained = to_contained(contained)
+    case_to_contained_by_plan = {p: to_contained([c for c in contained if plan_of(c) == p]) for p in plans}
     approval_wait = summary([round((parse_iso(c["approved_at"]) - parse_iso(c["notified_at"])).total_seconds(), 2)
                              for c in contained if parse_iso(c.get("approved_at")) and parse_iso(c.get("notified_at"))])
     robustness = [r for r in runs if r.get("kind") == "robustness"]
+    outcomes = {r["run_id"]: harness_outcome(r, cases) for r in robustness if execution_failed(r)}
+    deployments = deployments or []
+    released = {k: sum(1 for d in deployments if deployment_outcome(d) == k) for k in ("deployed", "lab_off", "failed")}
+    released["partial_failure"] = sum(1 for d in deployments if deployment_outcome(d) == "deployed"
+                                      and any(t.get("status") == "failed" for t in d.get("targets") or []))
     lead = []
-    for d in deployments or []:
+    for d in deployments:
         a, b = parse_iso(d.get("commit_time")), parse_iso(d.get("deployed_at"))
-        if a and b:
+        if a and b and deployment_outcome(d) == "deployed":
             lead.append((b - a).total_seconds())
     return {
         "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "scope": {"rules_releases": sorted({r["rules_release"] for r in runs if r.get("rules_release")}),
                   "first_run": min((r["started_at"] for r in runs if r.get("started_at")), default=None)},
-        "counts": {"cases": len(cases), "excluded_cases": len(cases) - len(measured_cases), "invalid_runs": cls["invalid_runs"],
-               "alerts": total_alerts, "runs": len(runs),
+        "counts": {"cases": len(cases), "measured_cases": len(measured_cases),
+                   "excluded_cases": len(cases) - len(measured_cases),
+                   "excluded_by_reason": {k: sum(1 for c in cases if cls["labels"].get(c["case_id"]) == k)
+                                          for k in sorted(excluded)
+                                          if any(cls["labels"].get(c["case_id"]) == k for c in cases)},
+                   "invalid_runs": cls["invalid_runs"], "alerts": total_alerts, "runs": len(runs),
                    "by_status": {s: sum(1 for c in cases if c["status"] == s) for s in sorted({c["status"] for c in cases})}},
         "detection_latency_by_source_s": {"alert_to_case": {k: summary(v) for k, v in pipeline.items()},
                                           "run_start_to_case": {k: summary(v) for k, v in e2e.items()}},
+        "response_exclusions": {"dry_run": sorted(c["case_id"] for c in dry),
+                                "decided_by_assistant": sorted(c["case_id"] for c in by_assistant)},
         "time_to_containment_s": containment,
+        "time_to_containment_by_plan_s": {p: summary([c["containment_seconds"] for c in live if plan_of(c) == p
+                                                      and c.get("containment_seconds") is not None]) for p in plans},
         "approval_wait_s": approval_wait,
         "case_to_containment_s": case_to_contained,
-        "time_to_evidence_preservation_s": summary([c["evidence_seconds"] for c in cases
+        "case_to_containment_by_plan_s": case_to_contained_by_plan,
+        "time_to_evidence_preservation_s": summary([c["evidence_seconds"] for c in live
                                                     if c.get("evidence_seconds") is not None]),
-        "time_to_restore_s": summary([c["restore_seconds"] for c in cases if c.get("restore_seconds") is not None]),
+        "time_to_restore_s": summary([c["restore_seconds"] for c in live if c.get("restore_seconds") is not None]),
         "rule_quality": cls["rules"],
         "detection_quality": detection_quality(runs, rules_meta),
         "pipeline_canary": cls["canary"],
@@ -516,19 +612,23 @@ def compute_metrics(cases: list[dict], runs: list[dict], rules_meta: dict | None
             "alerts": total_alerts, "cases": len(measured_cases),
             "reduction": round(1 - len(measured_cases) / total_alerts, 3) if total_alerts else None},
         "rule_deployment_lead_time_s": summary(lead),
-        # a run the harness could not carry out (e.g. its own setup error) tested nothing: listed, not scored
+        "rule_releases": released,
         "window_headroom": window_headroom(cases, runs),
         "failed_cases": failed_cases(cases, runs),
+        # a run whose harness raised is not scored. It either tested nothing (its own setup error), or the system did
+        # run and only the harness failed afterwards: `system_outcome` (the case it decided) tells the two apart.
         "robustness": {"runs": sum(1 for r in robustness if not execution_failed(r)),
                        "passed": sum(1 for r in robustness if r.get("result", {}).get("pass")),
-                       "not_executed": sum(1 for r in robustness if execution_failed(r)),
+                       "not_executed": sum(1 for o in outcomes.values() if o is None),
+                       "harness_failed": sum(1 for o in outcomes.values() if o is not None),
                        "detail": [{"run": r["run_id"], "scenario": r["scenario"], "pass": r.get("result", {}).get("pass"),
-                                   "executed": not execution_failed(r),
+                                   "executed": not execution_failed(r), "system_outcome": outcomes.get(r["run_id"]),
                                    "checks": r.get("result", {}).get("checks", [])} for r in robustness]},
         "operating_cost": cost or {"available": False, "note": "no cost data: run without --offline so that "
                                    "CloudTrail, the Pricing API and Cost Explorer can be queried"},
         "baseline_comparison": baseline_comparison(
-            baseline or [], case_to_contained, [manual_steps(c) for c in contained]),
+            baseline or [], {p: to_contained([c for c in contained if plan_of(c) == p], activity_time) for p in plans},
+            {p: [manual_steps(c) for c in contained if plan_of(c) == p] for p in plans}),
     }
 
 
@@ -551,7 +651,12 @@ def _render_cost(oc: dict) -> list[str]:
     lines = []
     sessions = oc.get("sessions")
     if sessions is not None:
-        lines.append(f"- Phiên lab (CloudTrail): {len(sessions)}; tổng {round(sum(x['hours'] for x in sessions), 2)} giờ")
+        still_open = [x for x in sessions if x.get("open")]
+        # an open session is cut at the report time: the lab may still be up, or its stop (manual or the auto-stop
+        # schedule) is not in CloudTrail yet, so its hours are a lower bound
+        lines.append(f"- Phiên lab (CloudTrail): {len(sessions)}; tổng {round(sum(x['hours'] for x in sessions), 2)} giờ"
+                     + (f" (tối thiểu: {len(still_open)} phiên còn mở, chỉ tính đến lúc sinh báo cáo "
+                        f"{', '.join(str(x.get('end', '?'))[:19] for x in still_open)})" if still_open else ""))
     for name, label in (("actual", "Thực tế (Cost Explorer)"), ("estimate", "Ước tính (giá niêm yết AWS Pricing API)")):
         part = oc.get(name) or {}
         if part.get("error"):
@@ -565,34 +670,76 @@ def _render_cost(oc: dict) -> list[str]:
     return lines or ["- n/a"]
 
 
+EXCLUDED_LABELS = {"sample": "mẫu GuardDuty", "invalid_run": "thuộc lượt mô phỏng lỗi",
+                   "pipeline_only": "lượt chỉ kiểm pipeline"}
+PLANS_SHOWN = ("ec2_isolate", "iam_key_disable")  # always listed, so a plan without data shows as n/a, not missing
+
+
+def _by_plan(per_plan: dict | None) -> str:
+    per_plan = per_plan or {}
+    return "; ".join(f"{p}: {_fmt(per_plan.get(p))}" for p in sorted(set(PLANS_SHOWN) | set(per_plan)))
+
+
+def _robustness_verdict(r: dict) -> str:
+    if r.get("executed", True):
+        harness = [c for c in r.get("checks", []) if c.get("harness") and not c.get("ok")]
+        return ("PASS" if r["pass"] else "FAIL") + (
+            f" (bước khôi phục của công cụ kiểm thử lỗi: {harness[0].get('detail')})" if harness else "")
+    o = r.get("system_outcome")
+    if o:
+        safe = " và dừng ở trạng thái an toàn" if o["status"] == "FAILED" and o.get("safe_state") else ""
+        return (f"hệ thống đã thực thi{safe} (case {o['case_id']} → {o['status']}, {o.get('safe_state') or '-'}); công "
+                f"cụ kiểm thử lỗi sau đó nên không chấm PASS/FAIL")
+    return "không thực thi (lỗi công cụ)"
+
+
 def render_markdown(m: dict) -> str:
     scope = m.get("scope") or {}
+    n = m["counts"]
+    measured = n.get("measured_cases", n["cases"] - n.get("excluded_cases", 0))
+    why = ", ".join(f"{k} {EXCLUDED_LABELS.get(r, r)}" for r, k in (n.get("excluded_by_reason") or {}).items())
     L = ["# Báo cáo đánh giá SIEM/SOAR lab", f"_Sinh lúc {m['generated_at']}_", "",
          f"- Phạm vi: các lượt chạy từ {scope.get('since') or scope.get('first_run') or '-'}; bản phát hành rule: "
          f"{', '.join(s[:8] for s in scope.get('rules_releases', [])) or 'không ghi nhận'}",
-         f"- Cases: **{m['counts']['cases']}**, alerts gộp vào: **{m['counts']['alerts']}**, "
-         f"lượt mô phỏng: **{m['counts']['runs']}**",
-         f"- Trạng thái: {json.dumps(m['counts']['by_status'])}", "", "## Độ trễ phát hiện (Detection latency per source)", "",
+         f"- Cases: **{n['cases']}** (đo: **{measured}**; loại trừ {n['cases'] - measured}"
+         + (f": {why}" if why else "") + f"); alert gộp vào {measured} case đo: **{n['alerts']}**; "
+         f"lượt mô phỏng: **{n['runs']}**",
+         f"- Trạng thái (mọi case): {json.dumps(n['by_status'])}", "",
+         "## Độ trễ phát hiện (Detection latency per source)", "",
          "| Nguồn | alert → case | bắt đầu mô phỏng → case |", "|---|---|---|"]
     lat = m["detection_latency_by_source_s"]
     for s in sorted(set(lat["alert_to_case"]) | set(lat["run_start_to_case"])):
         L.append(f"| {s} | {_fmt(lat['alert_to_case'].get(s))} | {_fmt(lat['run_start_to_case'].get(s))} |")
+    ex = m.get("response_exclusions") or {}
     L += ["", "## Thời gian phản ứng", "",
           f"- Time to containment (từ lúc duyệt đến khi xác minh): {_fmt(m['time_to_containment_s'])}",
+          f"  - theo kế hoạch phản ứng: {_by_plan(m.get('time_to_containment_by_plan_s'))}",
           f"- Thời gian chờ người duyệt (thông báo → duyệt): {_fmt(m.get('approval_wait_s'))}",
           f"- Từ khi có case đến khi ngăn chặn xong (gồm chờ duyệt): {_fmt(m.get('case_to_containment_s'))}",
+          f"  - theo kế hoạch phản ứng: {_by_plan(m.get('case_to_containment_by_plan_s'))}",
           f"- Time to evidence preservation: {_fmt(m['time_to_evidence_preservation_s'])}",
-          f"- Time to restore: {_fmt(m['time_to_restore_s'])}", "", "## Chất lượng rule (ground truth)", "",
-          "Tầng case (SOAR):", "",
+          f"- Time to restore: {_fmt(m['time_to_restore_s'])}",
+          f"- Loại khỏi mọi số đo trên: {len(ex.get('dry_run', []))} case dry-run (không thay đổi gì trên AWS nhưng "
+          f"bước verify vẫn ghi là đã ngăn chặn): {', '.join(ex.get('dry_run', [])) or '-'}",
+          f"- Loại khỏi thời gian chờ duyệt, case → ngăn chặn và số thao tác thủ công của baseline: "
+          f"{len(ex.get('decided_by_assistant', []))} case có trường `decided_by_assistant` (gắn tay trong DynamoDB, "
+          f"commit 25af333: trợ lý AI duyệt qua CLI, không phải quyết định của người duyệt): "
+          f"{', '.join(ex.get('decided_by_assistant', [])) or '-'}",
+          "", "## Chất lượng rule (ground truth)", "",
+          "Tầng case (SOAR). Rule shadow không được kỳ vọng mở case: recall tầng case là n/a, kết quả của nó nằm ở "
+          "cột Shadow và ở tầng phát hiện bên dưới.", "",
           "| Rule | TP | FP | FP (người dismiss) | Vi phạm shadow | FN (phát hiện / pipeline / chưa kiểm) "
-          "| Ngoài dự kiến | Precision | Recall |",
-          "|---|---|---|---|---|---|---|---|---|"]
+          "| Ngoài dự kiến | Shadow (đã alert / không alert / chưa kiểm) | Chưa gán nhãn | Precision | Recall |",
+          "|---|---|---|---|---|---|---|---|---|---|---|"]
     for rid, b in sorted(m["rule_quality"].items()):
         prec, rec = _rate(b["precision"], b.get("precision_ci95")), _rate(b["recall"], b.get("recall_ci95"))
+        shadow = (b.get("shadow_ok", 0), b.get("shadow_missed", 0), b.get("shadow_unverified", 0))
+        if b["recall"] is None and any(shadow):
+            rec = "n/a (shadow)"
         tp = f"{b['tp']} ({b['tp_merged']} gộp vào case đang mở)" if b.get("tp_merged") else b["tp"]
         L.append(f"| {rid} | {tp} | {b['fp']} | {b['human_fp']} | {b['shadow_violation']} | {b['fn']} "
                  f"({b['fn_detection']} / {b['fn_pipeline']} / {b['fn_unverified']}) | {b['unplanned']} "
-                 f"| {prec} | {rec} |")
+                 f"| {' / '.join(map(str, shadow))} | {b.get('unlabelled', 0)} | {prec} | {rec} |")
     dq = m["detection_quality"]
     L += ["", f"Tầng phát hiện (alert SIEM, mọi trạng thái vòng đời; {dq['benign_runs']} lượt lành tính, "
               f"{dq['unobserved_runs']} lượt chưa quan sát):", "",
@@ -633,8 +780,14 @@ def render_markdown(m: dict) -> str:
           "còn ít lượt chạy.", "",
           "## Giảm trùng lặp cảnh báo", "",
           f"- {m['alert_duplication_reduction']['alerts']} alert → {m['alert_duplication_reduction']['cases']} case "
-          f"(giảm {m['alert_duplication_reduction']['reduction']})", "",
-          "## Rule deployment lead time", "", f"- {_fmt(m['rule_deployment_lead_time_s'])}", "",
+          f"(giảm {m['alert_duplication_reduction']['reduction']}; chỉ các case đo, như dòng Cases ở đầu báo cáo)", "",
+          "## Rule deployment lead time", "", f"- {_fmt(m['rule_deployment_lead_time_s'])}"
+          + (" (commit → deploy xong; chỉ release đã lên ít nhất một host; không tính "
+             f"{m['rule_releases']['lab_off']} release phát hành khi lab tắt, {m['rule_releases']['failed']} release "
+             "deploy lỗi trên mọi host"
+             + (f"; đã tính {m['rule_releases']['partial_failure']} release lỗi trên một host"
+                if m["rule_releases"].get("partial_failure") else "")
+             + ")" if m.get("rule_releases") else ""), "",
           "## Cửa sổ chờ của kịch bản (kiểm chứng bằng số đo)", "",
           "| Kịch bản | Lượt | Phát hiện muộn nhất sau khi chạy xong | Cửa sổ | Đánh giá |", "|---|---|---|---|---|"]
     for sid, w in sorted((m.get("window_headroom") or {}).items()):
@@ -642,13 +795,15 @@ def render_markdown(m: dict) -> str:
                    "SÁT: nới cửa sổ" if w["tight"] else "đủ dư" if w["max_lag_s"] is not None else "chưa có phát hiện")
         L.append(f"| {sid} | {w['runs']} | {w['max_lag_s'] if w['max_lag_s'] is not None else '-'} s | "
                  f"{w['settle_s']} s | {verdict} |")
+    rb = m["robustness"]
     L += ["",
-          "## Robustness", "", f"- Đạt {m['robustness']['passed']}/{m['robustness']['runs']} lượt chạy"
-          + (f" ({m['robustness'].get('not_executed')} lượt không thực thi được do lỗi công cụ, không tính)"
-             if m["robustness"].get("not_executed") else "")]
-    for r in m["robustness"]["detail"]:
-        verdict = ("PASS" if r["pass"] else "FAIL") if r.get("executed", True) else "không thực thi (lỗi công cụ)"
-        L.append(f"  - {r['scenario']} ({r['run']}): {verdict}")
+          "## Robustness", "", f"- Đạt {rb['passed']}/{rb['runs']} lượt chạy"
+          + (f" ({rb.get('not_executed')} lượt không thực thi được do lỗi công cụ, không tính)"
+             if rb.get("not_executed") else "")
+          + (f" ({rb.get('harness_failed')} lượt hệ thống đã thực thi nhưng công cụ kiểm thử lỗi sau đó, không chấm)"
+             if rb.get("harness_failed") else "")]
+    for r in rb["detail"]:
+        L.append(f"  - {r['scenario']} ({r['run']}): {_robustness_verdict(r)}")
     failed = m.get("failed_cases") or []
     if failed:
         origin = {"robustness": "lỗi do kiểm thử robustness cố ý tiêm", "simulation": "trong lượt mô phỏng",
@@ -661,10 +816,20 @@ def render_markdown(m: dict) -> str:
     L += ["", "## Chi phí vận hành mỗi phiên", ""] + _render_cost(m["operating_cost"]) + [
         "", "## So sánh baseline (GuardDuty email + cách ly thủ công)", ""]
     b = m["baseline_comparison"]
-    L.append("- " + (b["note"] if not b["available"] else
-                     f"{b['drills']} lượt cách ly thủ công đo từ CloudTrail: p50 {b['baseline_contain_p50_s']}s; SOAR "
-                     f"(case → ngăn chặn, {b['soar_cases']} case) p50 {b['soar_case_to_contained_p50_s']}s; số thao "
-                     f"tác thủ công {b['baseline_manual_steps_mean']} vs {b['soar_manual_steps']}. {b['note']}"))
+    if not b["available"]:
+        L.append(f"- {b['note']}")
+    else:
+        L.append(f"- {b['drills']} lượt ngăn chặn thủ công đo từ CloudTrail, so với SOAR (hoạt động → ngăn chặn) theo "
+                 f"từng kế hoạch phản ứng. {b['note']}")
+        for plan, p in b["by_plan"].items():
+            manual = (f"{p['drills']} lượt, p50 {p['baseline_contain_p50_s']}s, {p['baseline_manual_steps_mean']} thao "
+                      "tác" if p["drills"] else "chưa có dữ liệu")
+            soar = (f"{p['soar_cases']} case, p50 {p['soar_activity_to_contained_p50_s']}s, {p['soar_manual_steps']} "
+                    "thao tác" if p["soar_cases"] else "chưa có dữ liệu")
+            verdict = (f"chênh p50 {p['contain_time_delta_s']}s" if p["comparable"] else
+                       "không so sánh được (không rõ kế hoạch phản ứng)" if plan == UNKNOWN_PLAN else
+                       "không so sánh được (một phía chưa có dữ liệu)")
+            L.append(f"  - {plan}: thủ công {manual}; SOAR {soar}; {verdict}")
     L += ["", "## Giới hạn", "", "Xem docs/limitations.md. Số liệu chỉ phản ánh lab một tài khoản với lưu lượng mô phỏng."]
     return "\n".join(L) + "\n"
 
@@ -747,6 +912,9 @@ def main(argv: list[str] | None = None) -> int:
         from evaluation import sources
         store = CaseStore()
         cases, runs = store.list_cases(), store.list_runs()
+        for c in cases:  # dry_run() falls back to the audit when the case carries no dry_run of its own
+            if c.get("dry_run") is None and any(c.get(k) is not None for k in RESPONSE_TIMES):
+                c["audit"] = store.list_audit(c["case_id"])
         try:
             deployments = load_deployments(args.prefix)
         except Exception as err:  # noqa: BLE001
@@ -762,6 +930,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"warning: baseline from CloudTrail unavailable: {measured['error']}", file=sys.stderr)
         baseline = measured.get("rows", [])
     cases, runs = in_scope(cases, runs, args.since)
+    deployments = deployments_in_scope(deployments, args.since)
     from simulation import catalog
     from tools import refdata
     m = compute_metrics(cases, runs, rulesctl.load_metadata(), baseline, deployments, cost,

@@ -514,9 +514,18 @@ class Runner:
                        [a["action"] for a in self.store.list_audit(case_id)], "detail": ""}]
         finally:
             self._set_fault("contain", "")
-        pre, _ = evidence.get_json(case_id, "pre_action_state")  # the recovery `soarctl recover` performs
-        response.restore_ec2_from_state(iid, pre)
-        restored, summary = response.ec2_matches_state(iid, pre)
+        # A recovery that could not be carried out is the harness failing, not the system under test (`harness`: not
+        # part of pass); it is recorded instead of raised, which would discard the checks above (2026-10-18, run 851a:
+        # the case reached FAILED with the host contained, then the recovery's evidence read failed and the run read
+        # "not executed"). A recovery that ran and did not bring the host back is still a failed check.
+        try:
+            pre, _ = evidence.get_json(case_id, "pre_action_state")  # the recovery `soarctl recover` performs
+            response.restore_ec2_from_state(iid, pre)
+            restored, summary = response.ec2_matches_state(iid, pre)
+        except Exception as err:  # noqa: BLE001
+            checks.append({"name": "recovered after the test", "ok": False, "harness": True,
+                           "detail": f"{type(err).__name__}: {err} (recover by hand: soarctl recover {case_id})"})
+            return checks
         checks.append({"name": "recovered after the test", "ok": restored, "detail": summary})
         return checks
 
@@ -558,7 +567,7 @@ class Runner:
         try:
             if kind == "robustness":
                 checks = getattr(self, f"check_{s['check']}")(s, run_id)
-                run["result"] = {"pass": all(c["ok"] for c in checks), "checks": checks}
+                run["result"] = {"pass": all(c["ok"] for c in checks if not c.get("harness")), "checks": checks}
             else:
                 # cross-host test: it runs on the sensor, the detection is expected on `observe_on`'s agent. That host
                 # must not be contained either (its new alerts would block the restore of its case).

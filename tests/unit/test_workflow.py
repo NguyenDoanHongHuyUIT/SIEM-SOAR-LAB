@@ -8,6 +8,7 @@ from handlers import ingest as ingest_handler
 from siemsoar import evidence, response
 from siemsoar.decisions import apply_decision
 
+from evaluation import evaluate
 from tests import asl_runner
 from tests.fixtures import events as ev
 
@@ -86,6 +87,7 @@ def test_ec2_full_lifecycle_false_positive(store, sfn):
     assert lab.sgs() == [lab.sg]  # original SG back
     assert "siemsoar:isolated-case" not in response.describe_instance(lab.iid)["tags"]
     assert case["containment_seconds"] >= 0 and case["evidence_seconds"] >= 0 and case["restore_seconds"] >= 0
+    assert not evaluate.dry_run({**case, "audit": store.list_audit(cid)})  # a real containment: evaluation times it
     assert case["evidence_snapshots"]
     state, digest = evidence.get_json(cid, "pre_action_state")
     assert state["security_groups"] == [lab.sg] and digest == case["pre_action_state_ref"]["sha256"]
@@ -229,6 +231,8 @@ def test_dry_run_walks_the_workflow_without_changing_aws(store, sfn):
     cid = start(store, ev.guardduty_instance(lab.iid))
     outcome, _, _ = asl_runner.run(cid, {**CFG, "dry_run": True}, gates("approve", "restore_fp"))
     assert outcome == "Succeed" and lab.sgs() == [lab.sg]
+    # verify passed without a change: kept out of response times, read from the audit (the case has no dry_run)
+    assert evaluate.dry_run({**store.get_case(cid), "audit": store.list_audit(cid)}) is True
     tagged = boto3.client("ec2", region_name=R).describe_snapshots(
         Filters=[{"Name": "tag-key", "Values": ["siemsoar:case"]}])["Snapshots"]
     assert not tagged

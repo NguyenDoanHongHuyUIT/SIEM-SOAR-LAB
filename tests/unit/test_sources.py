@@ -128,6 +128,9 @@ def test_cost_estimate_needs_a_price_for_every_type_and_never_invents_one():
     assert est["total_usd_compute_estimate"] == 0.24 and est["avg_usd_per_session"] == 0.24
     with pytest.raises(ValueError, match="no price"):
         src.estimate_session_cost(sessions, {"t3.large": 0.1})
+    assert "still open" not in est["note"] and est["sessions"][0]["open"] is False
+    open_est = src.estimate_session_cost([{**sessions[0], "open": True}], {"t3.large": 0.1, "t3.small": 0.02})
+    assert "1 session(s) still open, counted only up to the report time" in open_est["note"]
 
 
 def test_actual_cost_sums_billed_amounts_by_service_for_the_tag():
@@ -174,7 +177,7 @@ def human(when, name, who="arn:aws:iam::1:user/analyst", ro=False, console=True,
 
 
 def test_baseline_measures_the_first_human_containment_call_and_counts_the_clicks():
-    finding = {"id": "f1", "type": "UnauthorizedAccess:EC2/SSHBruteForce", "created_at": iso(t(10)),
+    finding = {"id": "f1", "type": "UnauthorizedAccess:EC2/SSHBruteForce", "first_seen": iso(t(10)),
                "resources": {"i-0abc"}}
     soar = "arn:aws:sts::1:assumed-role/siemsoar-fn-contain/siemsoar-contain"
     events = [
@@ -191,18 +194,70 @@ def test_baseline_measures_the_first_human_containment_call_and_counts_the_click
 
 
 def test_baseline_ignores_findings_nobody_contained_and_actions_outside_the_window():
-    finding = {"id": "f", "type": "X", "created_at": iso(t(10)), "resources": {"i-1"}}
+    finding = {"id": "f", "type": "X", "first_seen": iso(t(10)), "resources": {"i-1"}}
     late = human(t(10) + src.BASELINE_WINDOW + timedelta(minutes=1), "StopInstances", instanceId="i-1")
     early = human(t(9), "StopInstances", instanceId="i-1")
     assert src.baseline_rows([finding], [late, early]) == []
     # the simulation runner deletes the previous victim key with the operator's credentials: an SDK call, not a person
     runner_cleanup = human(t(10, 5), "DeleteAccessKey", console=False, userName="lab-victim", accessKeyId="AKIAX")
-    key_finding = {"id": "k", "type": "Stealth:IAMUser/CloudTrailLoggingDisabled", "created_at": iso(t(10)),
+    key_finding = {"id": "k", "type": "Stealth:IAMUser/CloudTrailLoggingDisabled", "first_seen": iso(t(10)),
                    "resources": {"lab-victim", "AKIAX"}}
     assert src.baseline_rows([key_finding], [runner_cleanup]) == []
     assert src.from_console({"sessionCredentialFromConsole": "true"}) and not src.from_console({})
     assert src.is_soar_principal({"userIdentity": {"arn": "arn:aws:sts::1:assumed-role/siemsoar-sfn-role/x"}})
     assert not src.is_soar_principal({"userIdentity": {"arn": "arn:aws:iam::1:user/analyst"}})
+
+
+def test_repeated_drills_aggregated_into_one_recurring_finding_are_timed_from_the_matching_occurrence():
+    """GuardDuty folds repeated drills on one key into one finding (Service.Count > 1) and keeps its first
+    (eventFirstSeen) and latest (eventLastSeen) activity. Timed from the first only, a drill 8 h later fell outside the
+    window and the rest were measured from an older occurrence."""
+    finding = {"id": "f", "type": "Stealth:IAMUser/CloudTrailLoggingDisabled", "plan": "iam_key_disable",
+               "first_seen": iso(t(8)), "last_seen": iso(t(16)), "resources": {"lab-victim", "key-1"}}
+    calls = [human(t(8, 5), "UpdateAccessKey", userName="lab-victim", accessKeyId="key-1"),    # drill 1
+             human(t(8, 6), "DeleteAccessKey", userName="lab-victim", accessKeyId="key-1"),    # same drill, 2nd click
+             human(t(12, 5), "UpdateAccessKey", userName="lab-victim", accessKeyId="key-1"),   # drill 2: time not kept
+             human(t(16, 4), "UpdateAccessKey", userName="lab-victim", accessKeyId="key-1")]   # drill 3 (latest)
+    rows = src.baseline_rows([finding], calls)
+    assert [(r["seconds_to_contain"], r["plan"]) for r in rows] == [(300.0, "iam_key_disable"),
+                                                                    (240.0, "iam_key_disable")]
+    assert rows[1]["manual_steps"] == 1  # only the clicks after the latest occurrence
+    single = {**finding, "last_seen": iso(t(8))}
+    assert [r["seconds_to_contain"] for r in src.baseline_rows([single], calls)] == [300.0]
+
+
+def test_guardduty_findings_use_the_latest_activity_like_the_schema_and_keep_the_plan():
+    class GD:
+        def list_detectors(self):
+            return {"DetectorIds": ["d"]}
+
+        def get_paginator(self, name):
+            class P:
+                def paginate(self, **kw):
+                    yield {"FindingIds": ["key", "host"]}
+            return P()
+
+        def get_findings(self, DetectorId, FindingIds):  # noqa: N803
+            return {"Findings": [
+                {"Id": "key", "Type": "Stealth:IAMUser/CloudTrailLoggingDisabled", "CreatedAt": iso(t(8, 10)),
+                 "UpdatedAt": iso(t(20)), "Service": {"Count": 3, "EventFirstSeen": iso(t(8)),
+                                                      "EventLastSeen": iso(t(16))},
+                 "Resource": {"ResourceType": "AccessKey",
+                              "AccessKeyDetails": {"UserName": "lab-victim", "AccessKeyId": "key-1"}}},
+                {"Id": "host", "Type": "Recon:EC2/Portscan", "CreatedAt": iso(t(9)), "UpdatedAt": iso(t(11)),
+                 "Service": {"Count": 1},
+                 "Resource": {"ResourceType": "Instance", "InstanceDetails": {"InstanceId": "i-1"}}}]}
+    key, host = src.guardduty_findings(GD(), t(0))
+    # UpdatedAt (t 20: e.g. an archive) is not an occurrence; without EventFirstSeen the schema falls back to CreatedAt
+    assert (key["plan"], key["first_seen"], key["last_seen"]) == ("iam_key_disable", iso(t(8)), iso(t(16)))
+    assert (host["plan"], host["first_seen"], host["last_seen"]) == ("ec2_isolate", iso(t(9)), iso(t(9)))
+    calls = [human(t(16, 4), "UpdateAccessKey", userName="lab-victim", accessKeyId="key-1")]
+    assert [r["seconds_to_contain"] for r in src.baseline_rows([key], calls)] == [240.0]
+
+
+def test_baseline_plans_are_the_soar_plan_names():
+    from siemsoar import schema
+    assert set(src.PLAN_OF_RESOURCE.values()) == {schema.PLAN_EC2, schema.PLAN_IAM}
 
 
 def test_guardduty_samples_are_never_a_baseline():
