@@ -393,7 +393,8 @@ def test_metrics_ground_truth_labelling():
     assert m["detection_latency_by_source_s"]["run_start_to_case"]["suricata"]["p50"] == 20.0
     cov = m["attack_coverage"]
     assert set(cov["techniques_detected"]) == {"T1136.001", "T1071.001"} and cov["coverage_of_exercised"] == 1.0
-    assert m["robustness"] == {"runs": 1, "passed": 1, "not_executed": 0, "detail": m["robustness"]["detail"]}
+    assert m["robustness"] == {"runs": 1, "passed": 1, "not_executed": 0, "harness_failed": 0,
+                               "detail": m["robustness"]["detail"]}
 
 
 def test_robustness_cases_are_attributed_by_their_scripted_decision_and_kept_out_of_rule_quality():
@@ -418,6 +419,173 @@ def test_robustness_cases_are_attributed_by_their_scripted_decision_and_kept_out
     assert {k: m["robustness"][k] for k in ("runs", "passed", "not_executed")} == {"runs": 2, "passed": 2,
                                                                                     "not_executed": 1}
     assert "không thực thi" in ev.render_markdown(m)
+
+
+def test_a_robustness_run_whose_harness_failed_after_the_system_ran_is_not_reported_as_not_executed():
+    """robust-mid-failure 851a (2026-10-18): the case reached FAILED with the host left contained, then the harness's
+    own recovery raised. The report said 'không thực thi (lỗi công cụ)', as if nothing had run."""
+    harness = {"run_id": "run-202610180610-robust-mid-failure-851a", "scenario": "robust-mid-failure",
+               "kind": "robustness", "malicious": True, "expect": [], "started_at": "2026-10-18T06:10:32Z",
+               "result": {"pass": False, "checks": [{"name": "execution", "ok": False, "detail": "Invalid bucket name"}]},
+               "execution_error": "Invalid bucket name"}
+    setup = {**harness, "run_id": "run-202610180620-robust-mid-failure-0000", "started_at": "2026-10-18T06:20:00Z"}
+    case = _case(1, rule="100110", status="FAILED", created="2026-10-18T06:10:47Z", failure_error="InjectedFault",
+                 approver=f"sim:{harness['run_id']}", safe_state="resource left CONTAINED")
+    m = ev.compute_metrics([case], [harness, setup], {})
+    rb = m["robustness"]
+    assert (rb["runs"], rb["not_executed"], rb["harness_failed"]) == (0, 1, 1)
+    assert rb["detail"][0]["system_outcome"] == {"case_id": "C1", "status": "FAILED",
+                                                 "safe_state": "resource left CONTAINED"}
+    md = ev.render_markdown(m)
+    assert (f"({harness['run_id']}): hệ thống đã thực thi và dừng ở trạng thái an toàn (case C1 → FAILED, resource left "
+            "CONTAINED)") in md
+    assert f"({setup['run_id']}): không thực thi (lỗi công cụ)" in md
+
+
+def test_the_runner_records_a_failed_recovery_as_a_harness_check_not_as_a_run_that_never_executed(monkeypatch):
+    from types import SimpleNamespace
+
+    from siemsoar import decisions, evidence, response
+    r = object.__new__(runner.Runner)
+    r.dry_run, r.wait, r.log = False, False, (lambda m: None)
+    r.store = SimpleNamespace(put_run=lambda run: None, list_audit=lambda cid: [{"action": "notified:failed"}])
+    r.rules_release = lambda: None
+    r.attack_target = lambda role: "i-0aaaaaaaaaaaaaaa1"
+    r._set_fault = lambda function, point: None
+    r._open_case_via = lambda trigger, run_id: "C-1"
+    r._wait_status = lambda cid, statuses, timeout=180: {"status": next(iter(statuses)), "safe_state": "CONTAINED"}
+    groups = iter([["sg-original"], ["sg-isolation"]])
+    monkeypatch.setattr(response, "describe_instance", lambda iid: {})
+    monkeypatch.setattr(response, "eni_groups", lambda info: next(groups))
+    monkeypatch.setattr(decisions, "apply_decision", lambda *a, **kw: None)
+
+    def no_bucket(*a, **kw):
+        raise ValueError('Invalid bucket name ""')
+    monkeypatch.setattr(evidence, "get_json", no_bucket)
+    run = r.run("robust-mid-failure")
+    assert "execution_error" not in run and run["result"]["pass"] is True
+    recovery = run["result"]["checks"][-1]
+    assert recovery["harness"] and not recovery["ok"] and "soarctl recover C-1" in recovery["detail"]
+    md = ev.render_markdown(ev.compute_metrics([], [run], {}))
+    assert "PASS (bước khôi phục của công cụ kiểm thử lỗi" in md
+
+
+def test_a_recovery_that_ran_and_did_not_bring_the_host_back_still_fails_the_run(monkeypatch):
+    from types import SimpleNamespace
+
+    from siemsoar import decisions, evidence, response
+    r = object.__new__(runner.Runner)
+    r.dry_run, r.wait, r.log = False, False, (lambda m: None)
+    r.store = SimpleNamespace(put_run=lambda run: None, list_audit=lambda cid: [{"action": "notified:failed"}])
+    r.rules_release = lambda: None
+    r.attack_target = lambda role: "i-0aaaaaaaaaaaaaaa1"
+    r._set_fault = lambda function, point: None
+    r._open_case_via = lambda trigger, run_id: "C-1"
+    r._wait_status = lambda cid, statuses, timeout=180: {"status": next(iter(statuses)), "safe_state": "CONTAINED"}
+    groups = iter([["sg-original"], ["sg-isolation"]])
+    monkeypatch.setattr(response, "describe_instance", lambda iid: {})
+    monkeypatch.setattr(response, "eni_groups", lambda info: next(groups))
+    monkeypatch.setattr(decisions, "apply_decision", lambda *a, **kw: None)
+    monkeypatch.setattr(evidence, "get_json", lambda *a, **kw: ({"security_groups": ["sg-original"]}, "d"))
+    monkeypatch.setattr(response, "restore_ec2_from_state", lambda iid, pre: None)
+    monkeypatch.setattr(response, "ec2_matches_state", lambda iid, pre: (False, "still isolated"))
+    run = r.run("robust-mid-failure")
+    assert "execution_error" not in run and run["result"]["pass"] is False
+    assert not run["result"]["checks"][-1].get("harness")
+
+
+def test_rule_deployment_lead_time_counts_only_releases_deployed_on_the_lab():
+    """tools/release.py records deployment.json also for a publish with the lab off and for a failed deploy."""
+    def dep(day, *statuses):
+        return {"commit_time": f"2026-10-{day}T10:00:00Z", "deployed_at": f"2026-10-{day}T10:02:00Z",
+                "targets": [{"target": t, "status": s} for t, s in zip(("manager", "sensor"), statuses, strict=False)]}
+    deps = [dep(17, "deployed", "deployed"), dep(18, "deployed", "skipped_lab_off"), dep(19, "skipped_lab_off",
+            "skipped_lab_off"), dep(20, "deployed", "failed"), dep(21), dep(22, "failed", "failed")]
+    assert [ev.deployment_outcome(d) for d in deps] == ["deployed", "deployed", "lab_off", "deployed", "lab_off", "failed"]
+    m = ev.compute_metrics([], [], {}, deployments=deps)
+    assert m["rule_deployment_lead_time_s"]["n"] == 3
+    assert m["rule_releases"] == {"deployed": 3, "lab_off": 2, "failed": 1, "partial_failure": 1}
+    md = ev.render_markdown(m)
+    assert "không tính 2 release phát hành khi lab tắt, 1 release deploy lỗi trên mọi host" in md
+    assert "đã tính 1 release lỗi trên một host" in md
+    assert [d["deployed_at"][:10] for d in ev.deployments_in_scope(deps, "2026-10-19T00:00:00Z")] == [
+        "2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22"]
+    assert ev.deployments_in_scope(deps, None) == deps
+    with pytest.raises(ValueError, match="ISO"):
+        ev.deployments_in_scope(deps, "last week")
+
+
+def test_dry_run_cases_are_kept_out_of_response_times():
+    """contain._verify passes a dry run without changing AWS. Older cases only carry dry_run in their audit."""
+    real = _case(1, status="RESTORED", containment_seconds=10.0, evidence_seconds=5.0, restore_seconds=50.0,
+                 isolated_at="2026-10-06T10:01:30Z", dry_run=False)
+    flagged = _case(2, status="RESTORED", containment_seconds=1.0, evidence_seconds=1.0, restore_seconds=1.0,
+                    isolated_at="2026-10-06T10:00:31Z", dry_run=True)
+    audited = _case(3, status="RESTORED", containment_seconds=2.0, evidence_seconds=2.0, restore_seconds=2.0,
+                    isolated_at="2026-10-06T10:00:32Z",
+                    audit=[{"action": "preflight_ok", "detail": {"dry_run": True}},
+                           {"action": "status:ISOLATED", "detail": {"summary": "x", "dry_run": True}}])
+    assert [ev.dry_run(c) for c in (real, flagged, audited, _case(4))] == [False, True, True, False]
+    m = ev.compute_metrics([real, flagged, audited], [], {})
+    for key in ("time_to_containment_s", "time_to_evidence_preservation_s", "time_to_restore_s",
+                "case_to_containment_s"):
+        assert m[key]["n"] == 1, key
+    assert m["time_to_containment_s"]["p50"] == 10.0 and m["response_exclusions"]["dry_run"] == ["C2", "C3"]
+    assert "2 case dry-run (không thay đổi gì trên AWS" in ev.render_markdown(m)
+
+
+def test_the_hand_annotated_assistant_decision_is_named_in_the_report():
+    """decided_by_assistant is set by hand in DynamoDB (commit 25af333), no code writes it: the report must say which
+    cases it removed from the approval-dependent figures."""
+    human = _case(1, created="2026-10-18T06:00:00Z", notified_at="2026-10-18T06:00:05Z",
+                  approved_at="2026-10-18T06:01:05Z", isolated_at="2026-10-18T06:01:15Z", containment_seconds=10.0)
+    assistant = {**_case(2, created="2026-10-18T07:00:00Z", notified_at="2026-10-18T07:00:05Z",
+                         approved_at="2026-10-18T07:00:10Z", isolated_at="2026-10-18T07:00:20Z",
+                         containment_seconds=10.0), "decided_by_assistant": True}
+    undecided = {**_case(3, status="DISMISSED"), "decided_by_assistant": True}  # never contained: nothing was left out
+    m = ev.compute_metrics([human, assistant, undecided], [], {})
+    assert m["approval_wait_s"]["n"] == 1 and m["case_to_containment_s"]["n"] == 1
+    assert m["time_to_containment_s"]["n"] == 2  # approval -> containment is automated, whoever approved
+    assert m["response_exclusions"]["decided_by_assistant"] == ["C2"]
+    assert "1 case có trường `decided_by_assistant` (gắn tay trong DynamoDB" in ev.render_markdown(m)
+
+
+def test_containment_is_split_by_response_plan_so_the_iam_path_is_visible():
+    ec2 = _case(1, isolated_at="2026-10-06T10:01:30Z", containment_seconds=10.0,
+                response_plan={"type": "ec2_isolate", "params": {}})
+    iam = _case(2, source="guardduty", isolated_at="2026-10-06T10:00:40Z", containment_seconds=4.0,
+                response_plan={"type": "iam_key_disable", "params": {}})
+    m = ev.compute_metrics([ec2, iam], [], {})
+    assert m["time_to_containment_by_plan_s"]["iam_key_disable"]["p50"] == 4.0
+    assert m["case_to_containment_by_plan_s"]["ec2_isolate"]["p50"] == 60.0
+    assert "iam_key_disable: n=1 · p50 4.0s" in ev.render_markdown(m)
+    # a plan with no case is shown as n/a, not left out
+    assert "iam_key_disable: n/a" in ev.render_markdown(ev.compute_metrics([ec2], [], {}))
+
+
+def test_the_header_counts_cases_and_alerts_of_the_same_population():
+    """Report 2026-10-30: 'Cases: 27, alerts gộp vào: 28' (all cases) next to '28 alert → 23 case' (measured cases)."""
+    run = {"run_id": "sample-run", "malicious": False, "evaluation_scope": "pipeline_only", "techniques": [],
+           "started_at": "2026-10-06T09:00:00Z", "ended_at": "2026-10-06T09:00:01Z",
+           "expect": [{"source": "guardduty", "rule_id": "S", "case": True}]}
+    cases = [_case(1, alert_count=3), _case(2, rule="S", source="guardduty", created="2026-10-06T09:00:02Z"),
+             _case(3, rule="S", source="guardduty", created="2026-10-06T09:00:03Z", sample=True)]
+    m = ev.compute_metrics(cases, [run], {})
+    assert m["counts"]["measured_cases"] == 1 and m["counts"]["excluded_by_reason"] == {"pipeline_only": 1, "sample": 1}
+    md = ev.render_markdown(m)
+    assert ("Cases: **3** (đo: **1**; loại trừ 2: 1 lượt chỉ kiểm pipeline, 1 mẫu GuardDuty); "
+            "alert gộp vào 1 case đo: **3**") in md
+    assert "3 alert → 1 case" in md
+
+
+def test_an_open_lab_session_is_labelled_as_counted_until_the_report_time():
+    cost = {"sessions": [{"hours": 2.0, "open": False, "end": "2026-10-20T09:32:34+00:00"},
+                         {"hours": 3.5, "open": True, "end": "2026-10-30T06:32:45.371792+00:00"}]}
+    md = ev.render_markdown(ev.compute_metrics([], [], {}, cost=cost))
+    assert ("Phiên lab (CloudTrail): 2; tổng 5.5 giờ (tối thiểu: 1 phiên còn mở, chỉ tính đến lúc sinh báo cáo "
+            "2026-10-30T06:32:45)") in md
+    closed = ev.render_markdown(ev.compute_metrics([], [], {}, cost={"sessions": cost["sessions"][:1]}))
+    assert "tổng 2.0 giờ\n" in closed
 
 
 def test_metrics_false_negative_and_shadow_ok():
@@ -466,14 +634,38 @@ def test_percentiles_and_summary():
 
 
 def test_baseline_comparison():
-    assert ev.baseline_comparison([], {"p50": 10})["available"] is False
-    b = ev.baseline_comparison([{"seconds_to_contain": "300", "manual_steps": "9"},
-                                {"seconds_to_contain": "500", "manual_steps": "7"}], {"p50": 20.0, "n": 3})
-    assert b["baseline_contain_p50_s"] == 400.0 and b["contain_time_delta_s"] == 380.0
-    assert b["drills"] == 2 and b["soar_cases"] == 3
-    assert b["soar_manual_steps"] is None  # nothing observed: never assume a number
-    b = ev.baseline_comparison([{"seconds_to_contain": "300", "manual_steps": "9"}], {"p50": 20.0}, [2, 2, 1])
-    assert b["soar_manual_steps"] == 1.7
+    assert ev.baseline_comparison([], {"iam_key_disable": {"p50": 10, "n": 1}})["available"] is False
+    iam = "iam_key_disable"
+    b = ev.baseline_comparison([{"seconds_to_contain": "300", "manual_steps": "9", "plan": iam},
+                                {"seconds_to_contain": "500", "manual_steps": "7", "plan": iam}],
+                               {iam: {"p50": 20.0, "n": 3}})
+    p = b["by_plan"][iam]
+    assert p["baseline_contain_p50_s"] == 400.0 and p["contain_time_delta_s"] == 380.0 and p["comparable"]
+    assert b["drills"] == 2 and p["soar_cases"] == 3
+    assert p["soar_manual_steps"] is None  # nothing observed: never assume a number
+    b = ev.baseline_comparison([{"seconds_to_contain": "300", "manual_steps": "9", "plan": iam}],
+                               {iam: {"p50": 20.0, "n": 3}}, {iam: [2, 2, 1]})
+    assert b["by_plan"][iam]["soar_manual_steps"] == 1.7
+
+
+def test_the_baseline_compares_like_with_like_and_says_when_a_side_has_no_data():
+    """Drills disable a key in the IAM console; the SOAR's measured containments were EC2 isolations. Putting those two
+    p50s side by side would compare different responses."""
+    b = ev.baseline_comparison([{"seconds_to_contain": "600", "manual_steps": "3", "plan": "iam_key_disable"}],
+                               {"ec2_isolate": {"p50": 85.6, "n": 6}, "iam_key_disable": {"n": 0}})
+    assert set(b["by_plan"]) == {"ec2_isolate", "iam_key_disable"}
+    unknown = ev.baseline_comparison([{"seconds_to_contain": "60", "manual_steps": "1"}],
+                                     {"unknown": {"p50": 5.0, "n": 1}})["by_plan"]["unknown"]
+    assert (unknown["drills"], unknown["soar_cases"], unknown["comparable"]) == (1, 1, False)  # no plan: nothing to pair
+    assert b["by_plan"]["iam_key_disable"] == {**b["by_plan"]["iam_key_disable"], "drills": 1, "soar_cases": 0,
+                                               "comparable": False, "contain_time_delta_s": None}
+    assert b["by_plan"]["ec2_isolate"]["drills"] == 0 and not b["by_plan"]["ec2_isolate"]["comparable"]
+    case = _case(1, rule="R", source="wazuh", created="2026-10-19T01:00:00Z", event="2026-10-19T01:00:00Z",
+                 isolated_at="2026-10-19T01:01:00Z", response_plan={"type": "ec2_isolate", "params": {}})
+    md = ev.render_markdown(ev.compute_metrics([case], [], {}, [{"seconds_to_contain": "600", "manual_steps": "3",
+                                                                  "plan": "iam_key_disable"}]))
+    assert "iam_key_disable: thủ công 1 lượt, p50 600.0s, 3.0 thao tác; SOAR chưa có dữ liệu; không so sánh được" in md
+    assert "ec2_isolate: thủ công chưa có dữ liệu; SOAR 1 case, p50 60.0s" in md
 
 
 def test_the_baseline_is_compared_with_the_whole_soar_response_not_the_automated_step():
@@ -481,13 +673,16 @@ def test_the_baseline_is_compared_with_the_whole_soar_response_not_the_automated
     containment_seconds (7.1 s) starts at the approval; a manual response starts at the finding. The comparison uses
     case -> contained (701.3 s), which includes the human reaction like the baseline does."""
     case = _case(1, rule="R", source="guardduty", status="RESTORED", created="2026-10-19T01:49:40.697Z",
-                 notified_at="2026-10-19T01:49:44.805Z", approved_at="2026-10-19T02:01:14.881Z",
-                 isolated_at="2026-10-19T02:01:21.995Z", containment_seconds=7.11, restoring_at="2026-10-19T02:03:10Z")
-    m = ev.compute_metrics([case], [], {}, [{"seconds_to_contain": "900", "manual_steps": "4"}])
+                 event="2026-10-19T01:49:40.697Z", notified_at="2026-10-19T01:49:44.805Z",
+                 approved_at="2026-10-19T02:01:14.881Z",
+                 isolated_at="2026-10-19T02:01:21.995Z", containment_seconds=7.11, restoring_at="2026-10-19T02:03:10Z",
+                 response_plan={"type": "iam_key_disable", "params": {}})
+    m = ev.compute_metrics([case], [], {}, [{"seconds_to_contain": "900", "manual_steps": "4",
+                                             "plan": "iam_key_disable"}])
     assert m["time_to_containment_s"]["p50"] == 7.11
     assert m["approval_wait_s"]["p50"] == 690.08 and m["case_to_containment_s"]["p50"] == 701.3
-    b = m["baseline_comparison"]
-    assert b["soar_case_to_contained_p50_s"] == 701.3 and b["contain_time_delta_s"] == 198.7
+    b = m["baseline_comparison"]["by_plan"]["iam_key_disable"]
+    assert b["soar_activity_to_contained_p50_s"] == 701.3 and b["contain_time_delta_s"] == 198.7
     assert b["soar_manual_steps"] == 2  # approve + restore, read from the case
     assert "drills" in ev.compute_metrics([], [], {})["baseline_comparison"]
 
@@ -702,7 +897,8 @@ def test_markdown_report_renders_all_sections():
                                                                 "note": "billed"},
                                                      "estimate": {"error": "AccessDenied"}},
                                                deployments=[{"commit_time": "2026-10-06T10:00:00Z",
-                                                             "deployed_at": "2026-10-06T10:05:00Z"}]))
+                                                             "deployed_at": "2026-10-06T10:05:00Z",
+                                                             "targets": [{"target": "manager", "status": "deployed"}]}]))
     for h in ("Detection latency", "Chất lượng rule", "Độ phủ ATT&CK", "Robustness", "Chi phí", "baseline",
               "Rule deployment lead time"):
         assert h in md
@@ -909,9 +1105,37 @@ def test_a_shadow_pass_requires_proof_that_the_rule_fired():
     q = lambda **kw: ev.compute_metrics([], [{**base, **kw}], {})["rule_quality"]["100121"]  # noqa: E731
     assert q(observed={"wazuh:100121": True})["shadow_ok"] == 1
     missed = q(observed={"wazuh:100121": False})
-    assert missed["shadow_missed"] == 1 and missed["fn"] == 1 and missed["shadow_ok"] == 0  # rule never alerted
+    assert missed["shadow_missed"] == 1 and missed["shadow_ok"] == 0  # rule never alerted
     unchecked = q()
     assert unchecked["shadow_unverified"] == 1 and unchecked["shadow_ok"] == 0
+
+
+def test_the_baseline_clock_starts_at_the_activity_on_both_sides():
+    """A drill is timed from eventLastSeen, so the SOAR side must be too: from case creation it would start after
+    GuardDuty's own delay (p50 585 s in the 2026-10-30 report) and hand the SOAR that delay for free."""
+    case = _case(1, rule="R", source="guardduty", created="2026-10-19T02:10:00Z", event="2026-10-19T01:00:00Z",
+                 extra={"last_seen": "2026-10-19T02:00:00Z"}, isolated_at="2026-10-19T02:11:00Z",
+                 response_plan={"type": "iam_key_disable", "params": {}})
+    m = ev.compute_metrics([case], [], {}, [{"seconds_to_contain": "900", "manual_steps": "3", "plan": "iam_key_disable"}])
+    b = m["baseline_comparison"]["by_plan"]["iam_key_disable"]
+    assert m["case_to_containment_s"]["p50"] == 60.0  # the response line of the report keeps its own interval
+    assert b["soar_activity_to_contained_p50_s"] == 660.0 and b["contain_time_delta_s"] == 240.0
+
+
+def test_a_shadow_rule_has_no_case_layer_recall():
+    """Report 2026-10-30: 100100 showed case-layer recall 0.0 with shadow_ok 23, because a shadow miss counted as FN
+    while a shadow pass never counted as TP. No case is due from a shadow rule: its misses are detection-layer FNs."""
+    base = {"malicious": True, "techniques": ["T1110"], "started_at": "2026-10-06T10:00:00.000Z",
+            "ended_at": "2026-10-06T10:00:05.000Z", "expect": [{"source": "wazuh", "rule_id": "100121", "case": False}]}
+    runs = [{**base, "run_id": f"run-s-{i}", "observed": {"wazuh:100121": i < 3},
+             "siem_alerts": [{"rule_id": "100121", "timestamp": "2026-10-06T10:00:01.000Z"}] if i < 3 else []}
+            for i in range(4)]
+    m = ev.compute_metrics([], runs, {})
+    q = m["rule_quality"]["100121"]
+    assert (q["shadow_ok"], q["shadow_missed"], q["tp"], q["fn"], q["recall"]) == (3, 1, 0, 0, None)
+    assert m["detection_quality"]["rules"]["100121"]["fn"] == 1  # the miss is still scored, on the SIEM layer
+    row = next(line for line in ev.render_markdown(m).splitlines() if line.startswith("| 100121 | 0 "))
+    assert "| 3 / 1 / 0 | 0 |" in row and row.endswith("| n/a (shadow) |")
 
 
 def test_siem_observation_helpers():
