@@ -2,7 +2,9 @@
 
 Enabled by Terraform var `enable_fault_injection` (LAB_FAULTS_ENABLED=true). The simulation runner then sets
 FAULT_INJECT=<point>[,<point>] on the function configuration for the duration of one scenario.
-Points: contain.revoke_sessions (fails after the network was already isolated), notify.slack (Slack down).
+Points: contain.snapshot (fails before anything was contained), contain.isolate_network (fails after the evidence
+snapshot, before the network is isolated), contain.revoke_sessions (fails after the network was already isolated),
+notify.slack (Slack down).
 """
 
 from __future__ import annotations

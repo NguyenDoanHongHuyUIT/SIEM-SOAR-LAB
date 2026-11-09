@@ -933,7 +933,7 @@ def test_soarctl_list_show_decide_feedback(store, sfn, capsys, monkeypatch):
     assert audit["detail"]["aws_principal"].startswith("arn:aws")  # who ran the CLI is kept next to who approved
     assert soarctl.main(decide) == 1  # rejected: already handled
     stats = soarctl.feedback_stats(store)
-    assert stats["UnauthorizedAccess:EC2/SSHBruteForce"] == {"cases": 1, "false_positive": 1}
+    assert stats["UnauthorizedAccess:EC2/SSHBruteForce"] == {"cases": 1, "false_positive": 1, "reasons": {}}
 
 
 # ------------------------------------------------------------------ fault injection seam
@@ -1329,3 +1329,35 @@ def test_the_runner_knows_every_resource_name_the_terraform_module_gives_the_lam
     assert env["EVIDENCE_BUCKET"] == "siemsoar-evidence-314019368810"
     s3 = (Path(__file__).resolve().parents[2] / "infra/modules/serverless-core/s3.tf").read_text(encoding="utf-8")
     assert re.search(r'bucket\s*=\s*"\$\{var\.name_prefix\}-evidence-\$\{local\.account_id\}"', s3)
+
+
+def test_feedback_stats_counts_analyst_decisions_on_closed_cases_only():
+    """Same population as evaluate._human_fp: no simulation actors, no case still open or closed without a verdict."""
+    from evaluation.evaluate import _human_fp
+    from tools import soarctl
+    rule = {"rule_id": "R1"}
+    decided = [
+        {**rule, "status": "DISMISSED", "approver": "slack:U1", "fp_reason": "test"},
+        {**rule, "status": "DISMISSED", "approver": "cli:U1"},
+        {**rule, "status": "RESTORED", "approver": "slack:U1", "verdict": "false_positive", "fp_reason": "test"},
+        {**rule, "status": "RESTORED", "approver": "slack:U1", "verdict": "true_positive"},
+        {**rule, "status": "ACKNOWLEDGED", "approver": "slack:U1"},
+    ]
+    ignored = [
+        {**rule, "status": "DISMISSED", "approver": "sim:ground-truth"},
+        {**rule, "status": "RESTORED", "approver": "sim:robustness", "verdict": "false_positive"},
+        {**rule, "status": "ISOLATED", "approver": "slack:U1"},
+        {**rule, "status": "RESTORING", "approver": "slack:U1", "verdict": "false_positive"},
+        {**rule, "status": "NOTIFIED"},
+        {**rule, "status": "EXPIRED"},
+        {**rule, "status": "FAILED", "approver": "slack:U1"},
+    ]
+
+    class Store:
+        @staticmethod
+        def list_cases():
+            return decided + ignored
+
+    stats = soarctl.feedback_stats(Store)
+    assert stats == {"R1": {"cases": 5, "false_positive": 3, "reasons": {"test": 2}}}
+    assert stats["R1"]["false_positive"] == sum(_human_fp(c) for c in decided)

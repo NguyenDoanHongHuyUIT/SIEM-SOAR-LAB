@@ -3,6 +3,7 @@
   python -m tools.soarctl list [--status NOTIFIED]
   python -m tools.soarctl show <case_id>
   python -m tools.soarctl decide <case_id> --gate approval --decision approve     # Slack-less fallback channel
+  python -m tools.soarctl decide <case_id> --gate approval --decision dismiss --reason benign_admin
   python -m tools.soarctl recover <case_id> --approver U012 --reason "..."         # FAILED case, host contained
   python -m tools.soarctl feedback > feedback.json                                  # feed `rulesctl tune`
   python -m tools.soarctl lab status|up --hours 4|down
@@ -57,7 +58,8 @@ def recover(store, case_id: str, actor: str, reason: str, principal: str) -> dic
     """Runbook recovery of a FAILED EC2 case whose host was left contained: restore from the hashed pre-action state
     (the same procedure as the workflow's restore), verify, and audit who decided and why. A key disabled by an IAM case
     is not re-enabled here: whether to reactivate or rotate it is an IAM decision taken in the console."""
-    from siemsoar import evidence, response
+    from botocore.exceptions import WaiterError
+    from siemsoar import aws, evidence, response
     from siemsoar.schema import PLAN_EC2
     case = store.get_case(case_id)
     if case["status"] != "FAILED":
@@ -71,8 +73,15 @@ def recover(store, case_id: str, actor: str, reason: str, principal: str) -> dic
     pre, digest = evidence.get_json(case_id, "pre_action_state")
     if digest != (case.get("pre_action_state_ref") or {}).get("sha256"):
         raise ValueError("pre_action_state does not match the hash recorded when it was saved: do not restore from it")
-    out = response.restore_ec2_from_state(iid, pre)
-    restored, summary = response.ec2_matches_state(iid, pre)
+    start = bool(case.get("instance_stopped"))  # containment stopped it: a recovered host runs again, as after a restore
+    out = response.restore_ec2_from_state(iid, pre, start=start)
+    restarted = start and pre.get("state") == "running"
+    if restarted:
+        try:
+            aws.client("ec2").get_waiter("instance_running").wait(InstanceIds=[iid], WaiterConfig={"Delay": 5, "MaxAttempts": 36})
+        except WaiterError:
+            pass  # the check below reports it
+    restored, summary = response.ec2_matches_state(iid, pre, expect_running=restarted)
     detail = {"reason": reason, "aws_principal": principal, "evidence_sha256": digest, "restored": out,
               "verified": restored, "summary": summary}
     store.audit(case_id, "manual_recovery", actor, detail)
@@ -81,17 +90,24 @@ def recover(store, case_id: str, actor: str, reason: str, principal: str) -> dic
     return detail
 
 
+DECIDED = {"DISMISSED", "ACKNOWLEDGED", "RESTORED"}  # terminal AND carrying a human verdict on the alert
+
+
 def feedback_stats(store) -> dict:
-    """Per rule: closed cases and how many were false positives (dismissed by a human or restored as FP)."""
-    stats: dict[str, dict[str, int]] = defaultdict(lambda: {"cases": 0, "false_positive": 0})
+    """Per rule: cases a human closed and how many were false positives (dismissed, or restored as FP), with the
+    reasons given. Same population as evaluation/evaluate.py `_human_fp`: closures by the simulation (`sim:` actors:
+    ground truth, robustness scripts) are not analyst feedback; open, expired and failed cases carry no verdict."""
+    stats: dict[str, dict] = defaultdict(lambda: {"cases": 0, "false_positive": 0, "reasons": defaultdict(int)})
     for case in store.list_cases():
-        if case["status"] in {"NEW", "NOTIFIED", "APPROVED", "ISOLATING"}:
+        if case["status"] not in DECIDED or str(case.get("approver", "")).startswith("sim:"):
             continue
         s = stats[str(case["rule_id"])]
         s["cases"] += 1
         if case["status"] == "DISMISSED" or case.get("verdict") == "false_positive":
             s["false_positive"] += 1
-    return dict(stats)
+            if case.get("fp_reason"):
+                s["reasons"][case["fp_reason"]] += 1
+    return {rid: {**s, "reasons": dict(s["reasons"])} for rid, s in stats.items()}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -107,6 +123,8 @@ def main(argv: list[str] | None = None) -> int:
     dc.add_argument("--gate", choices=["approval", "restore"], required=True)
     dc.add_argument("--decision", required=True)
     dc.add_argument("--approver", required=True, help="your Slack member id (must be in /<prefix>/slack/approver_ids)")
+    dc.add_argument("--reason", help="why it is a false positive (dismiss / restore_fp), e.g. benign_admin, test, "
+                                     "duplicate or free text; kept in the audit and fed to `feedback`")
     rc = sub.add_parser("recover")
     rc.add_argument("case_id")
     rc.add_argument("--approver", required=True, help="your Slack member id (must be in /<prefix>/slack/approver_ids)")
@@ -153,7 +171,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         try:
             out = apply_decision(store, args.case_id, args.gate, args.decision, actor=f"cli:{args.approver}",
-                                 channel="cli", detail={"aws_principal": _principal()})
+                                 channel="cli", detail={"aws_principal": _principal()}, reason=args.reason)
         except (DecisionRejected, CaseNotFound) as err:
             print(f"rejected: {err}", file=sys.stderr)
             return 1

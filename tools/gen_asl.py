@@ -19,16 +19,21 @@ LAMBDA_RETRY = [{"ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaExc
                                  "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
                  "IntervalSeconds": 2, "MaxAttempts": 4, "BackoffRate": 2.0}]
 SDK_RETRY = [{"ErrorEquals": ["States.TaskFailed"], "IntervalSeconds": 2, "MaxAttempts": 3, "BackoffRate": 2.0}]
+# The verify steps read right after the writes they check, and EC2 and IAM reads are eventually consistent: AWS says to
+# re-run them with exponential backoff (https://docs.aws.amazon.com/ec2/latest/devguide/eventual-consistency.html,
+# https://docs.aws.amazon.com/IAM/latest/UserGuide/troubleshoot_general.html). _verify raises before its transition, so
+# a retry is safe. Timing is an operator choice: 155 s in all, which also covers a restarted instance reaching `running`.
+VERIFY_RETRY = [{"ErrorEquals": ["VerificationFailed"], "IntervalSeconds": 5, "MaxAttempts": 5, "BackoffRate": 2.0}]
 FAIL_CATCH = {"ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "FailSafe"}
 
 
-def task(fn: str, op: str, step: str, next_: str, *, catch=None, extra=None) -> dict:
+def task(fn: str, op: str, step: str, next_: str, *, catch=None, extra=None, retry=None) -> dict:
     payload = {"op": op, "state.$": "$", **(extra or {})}
     return {
         "Type": "Task", "Resource": "arn:aws:states:::lambda:invoke",
         "Parameters": {"FunctionName": "${fn_" + fn + "}", "Payload": payload},
         "ResultSelector": {"out.$": "$.Payload"}, "ResultPath": f"$.steps.{step}",
-        "Retry": LAMBDA_RETRY, "Catch": catch or [FAIL_CATCH], "Next": next_,
+        "Retry": LAMBDA_RETRY + (retry or []), "Catch": catch or [FAIL_CATCH], "Next": next_,
     }
 
 
@@ -85,9 +90,16 @@ def build() -> dict:
     s["ApprovalChoice"] = {"Type": "Choice", "Default": "FailSafe", "Choices": [
         {"Variable": "$.approval.decision", "StringEquals": "approve", "Next": "Preflight"},
         {"Variable": "$.approval.decision", "StringEquals": "acknowledge", "Next": "MarkAcknowledged"},
-        {"Variable": "$.approval.decision", "StringEquals": "dismiss", "Next": "DoneDismissed"}]}
-    s["MarkAcknowledged"] = task("case_ops", "acknowledged", "ack", "DoneAcknowledged")
+        {"Variable": "$.approval.decision", "StringEquals": "dismiss", "Next": "NotifyDismissed"}]}
+    s["MarkAcknowledged"] = task("case_ops", "acknowledged", "ack", "NotifyAcknowledged")
+    # the outcome of the human gate is notified too: the SNS email is the audit copy of every decision
+    s["NotifyAcknowledged"] = info("acknowledged", "notify_acknowledged", "DoneAcknowledged",
+                                   catch=[{"ErrorEquals": ["States.ALL"], "ResultPath": "$.notify_error",
+                                           "Next": "DoneAcknowledged"}])
     s["DoneAcknowledged"] = {"Type": "Succeed"}
+    s["NotifyDismissed"] = info("dismissed", "notify_dismissed", "DoneDismissed",
+                                catch=[{"ErrorEquals": ["States.ALL"], "ResultPath": "$.notify_error",
+                                        "Next": "DoneDismissed"}])
     s["DoneDismissed"] = {"Type": "Succeed"}
     s["MarkExpired"] = task("case_ops", "expire", "expire", "NotifyExpired")
     s["NotifyExpired"] = info("expired", "notify_expired", "DoneExpired",
@@ -127,7 +139,7 @@ def build() -> dict:
     s["AuditKeyDisableSkipped"] = audit("contain:disable_key", {"status": {"S": "unchanged"}, "dry_run": {"BOOL": True}},
                                         "RevokeUserSessions")
     s["RevokeUserSessions"] = task("contain", "revoke_user_sessions", "revoke", "VerifyContainment")
-    s["VerifyContainment"] = task("contain", "verify", "verify", "NotifyIsolated")
+    s["VerifyContainment"] = task("contain", "verify", "verify", "NotifyIsolated", retry=VERIFY_RETRY)
     s["NotifyIsolated"] = info("isolated", "notify_isolated", "WaitRestoreDecision",
                                catch=[{"ErrorEquals": ["States.ALL"], "ResultPath": "$.notify_error",
                                        "Next": "WaitRestoreDecision"}])
@@ -146,7 +158,7 @@ def build() -> dict:
     s["SetBlockedError"] = {"Type": "Pass", "ResultPath": "$.error", "Next": "FailSafe", "Result": {
         "Error": "RestoreBlocked", "Cause": "restore validation failed after the maximum number of attempts"}}
     s["ExecuteRestore"] = task("restore", "execute", "execute_restore", "VerifyRestore")
-    s["VerifyRestore"] = task("restore", "verify", "verify_restore", "NotifyRestored")
+    s["VerifyRestore"] = task("restore", "verify", "verify_restore", "NotifyRestored", retry=VERIFY_RETRY)
     s["NotifyRestored"] = info("restored", "notify_restored", "DoneRestored",
                                catch=[{"ErrorEquals": ["States.ALL"], "ResultPath": "$.notify_error", "Next": "DoneRestored"}])
     s["DoneRestored"] = {"Type": "Succeed"}

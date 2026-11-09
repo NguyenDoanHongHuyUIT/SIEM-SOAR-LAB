@@ -32,7 +32,8 @@ def test_all_targets_exist_and_all_states_reachable():
 
 
 def test_every_task_has_catch_to_failsafe_or_a_documented_exception():
-    notify_states = {"NotifyExpired", "NotifyIsolated", "NotifyBlocked", "NotifyRestored"}
+    notify_states = {"NotifyExpired", "NotifyIsolated", "NotifyBlocked", "NotifyRestored", "NotifyDismissed",
+                     "NotifyAcknowledged"}
     for name, st in STATES.items():
         if st["Type"] != "Task" or name in {"FailSafe"}:
             continue
@@ -69,6 +70,17 @@ def test_no_task_token_or_secret_in_state_names_or_results():
     assert "secret" not in blob.lower() and "password" not in blob.lower()
 
 
+def test_every_human_decision_outcome_is_notified():
+    """notifier: the SNS email is always sent (fallback and audit copy), dismissals and acknowledgements included."""
+    dismiss = [c["Next"] for c in STATES["ApprovalChoice"]["Choices"] if c["StringEquals"] == "dismiss"]
+    assert dismiss == ["NotifyDismissed"] and STATES["NotifyDismissed"]["Next"] == "DoneDismissed"
+    assert STATES["NotifyDismissed"]["Parameters"]["Payload"]["kind"] == "dismissed"
+    assert STATES["MarkAcknowledged"]["Next"] == "NotifyAcknowledged"
+    assert STATES["NotifyAcknowledged"]["Parameters"]["Payload"]["kind"] == "acknowledged"
+    for name, end in (("NotifyDismissed", "DoneDismissed"), ("NotifyAcknowledged", "DoneAcknowledged")):
+        assert [c["Next"] for c in STATES[name]["Catch"]] == [end]  # a failed notice never fails a closed case
+
+
 def test_containment_happens_only_after_approval_and_preflight():
     order = []
     cur = "Preflight"
@@ -87,6 +99,16 @@ def test_single_call_containment_steps_are_sdk_integrations_not_lambdas():
     assert STATES["DisableKey"]["Resource"] == "arn:aws:states:::aws-sdk:iam:updateAccessKey"
     for name in ("StopInstance", "DisableKey"):
         assert STATES[name]["Retry"] and any(c["Next"] == "FailSafe" for c in STATES[name]["Catch"])
+
+
+def test_only_the_verify_steps_retry_a_failed_verification():
+    """Read-after-write on eventually consistent APIs: a stale read must not fail a containment that is in place."""
+    retried = {name for name, s in STATES.items() for r in s.get("Retry", []) if "VerificationFailed" in r["ErrorEquals"]}
+    assert retried == {"VerifyContainment", "VerifyRestore"}
+    for name in retried:
+        [rule] = [r for r in STATES[name]["Retry"] if "VerificationFailed" in r["ErrorEquals"]]
+        assert rule["MaxAttempts"] >= 3 and rule["BackoffRate"] > 1
+        assert any(c["Next"] == "FailSafe" for c in STATES[name]["Catch"])  # a real mismatch still ends in the fail-safe
 
 
 def test_dry_run_never_reaches_a_mutating_sdk_call():

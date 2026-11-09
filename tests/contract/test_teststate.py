@@ -65,7 +65,7 @@ CASES = [
     ("plan-iam", "PlanChoice", _state(steps={"enrich": {"out": {"plan_type": "iam_key_disable"}}}), {},
      "SUCCEEDED", "ShouldDisableKey"),
     ("approve", "ApprovalChoice", _state(approval={"decision": "approve"}), {}, "SUCCEEDED", "Preflight"),
-    ("dismiss", "ApprovalChoice", _state(approval={"decision": "dismiss"}), {}, "SUCCEEDED", "DoneDismissed"),
+    ("dismiss", "ApprovalChoice", _state(approval={"decision": "dismiss"}), {}, "SUCCEEDED", "NotifyDismissed"),
     ("unknown-decision-fails-safe", "ApprovalChoice", _state(approval={"decision": "???"}), {}, "SUCCEEDED", "FailSafe"),
     ("human-gate-answer", "NotifyApproval", _state(config={"approval_timeout": 60}),
      {"mock": {"result": json.dumps({"decision": "approve"})}, "context": json.dumps({"Task": {"Token": "tok"}})},

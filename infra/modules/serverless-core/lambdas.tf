@@ -50,6 +50,8 @@ locals {
     s3_list     = { actions = ["s3:ListBucket"], resources = [aws_s3_bucket.evidence.arn] }
     ec2_read    = { actions = ["ec2:DescribeInstances"], resources = ["*"] }
     ec2_sg_read = { actions = ["ec2:DescribeSecurityGroups"], resources = ["*"] }
+    # verification of the evidence snapshots (DescribeSnapshots has no resource-level permissions)
+    ec2_snapshot_read = { actions = ["ec2:DescribeSnapshots"], resources = ["*"] }
     # mutating EC2 actions only on instances in the workload zone (tag), never on security-zone assets,
     # and each handler gets only the verbs it uses
     ec2_modify_instance = {
@@ -114,6 +116,10 @@ locals {
       actions   = ["iam:ListAccessKeys", "iam:ListUserTags"]
       resources = ["${local.iam_arn}:user/${var.iam_target_prefix}*"]
     }
+    iam_user_policy_read = {
+      actions   = ["iam:GetUserPolicy"] # is the session revocation in place: containment, restore and fail-safe only
+      resources = ["${local.iam_arn}:user/${var.iam_target_prefix}*"]
+    }
     iam_user_contain = {
       actions   = ["iam:PutUserPolicy"] # UpdateAccessKey moved to the state machine role (SDK integration)
       resources = ["${local.iam_arn}:user/${var.iam_target_prefix}*"]
@@ -123,6 +129,7 @@ locals {
       resources = ["${local.iam_arn}:user/${var.iam_target_prefix}*"]
     }
     iam_role_contain = { actions = ["iam:PutRolePolicy"], resources = [local.lab_role] }
+    iam_role_read    = { actions = ["iam:GetRolePolicy"], resources = [local.lab_role] }
     iam_role_restore = { actions = ["iam:DeleteRolePolicy", "iam:GetRolePolicy"], resources = [local.lab_role] }
     iam_profile_read = {
       actions   = ["iam:GetInstanceProfile"]
@@ -134,6 +141,11 @@ locals {
     }
     sfn_start = { actions = ["states:StartExecution"], resources = [local.sfn_arn] }
     sfn_task  = { actions = ["states:SendTaskSuccess"], resources = ["*"] }
+    # the Slack callback replaces the card in a second invocation of itself, after it has answered Slack
+    slack_interact_self = {
+      actions   = ["lambda:InvokeFunction"]
+      resources = ["arn:aws:lambda:${local.region}:${local.account_id}:function:${var.name_prefix}-slack_interact"]
+    }
   }
 
   functions = {
@@ -151,7 +163,7 @@ locals {
     }
     slack_interact = {
       timeout    = 10, memory = 256
-      statements = [local.st.ddb, local.st.ssm, local.st.kms_ssm, local.st.sfn_task]
+      statements = [local.st.ddb, local.st.ssm, local.st.kms_ssm, local.st.sfn_task, local.st.slack_interact_self]
     }
     preflight = {
       timeout    = 30, memory = 256
@@ -170,7 +182,8 @@ locals {
         local.st.ddb, local.st.s3_case_ro, local.st.s3_list, local.st.ec2_read, local.st.ec2_sg_read,
         local.st.ec2_modify_instance, local.st.ec2_contain_instance, local.st.ec2_sg_attach, local.st.ec2_modify_eni,
         local.st.ec2_sg_create_vpc, local.st.ec2_sg_create, local.st.ec2_sg_tag, local.st.ec2_sg_revoke_egress,
-        local.st.ec2_snapshot, local.st.iam_user_read, local.st.iam_user_contain, local.st.iam_role_contain,
+        local.st.ec2_snapshot, local.st.ec2_snapshot_read, local.st.iam_user_read, local.st.iam_user_policy_read,
+        local.st.iam_user_contain, local.st.iam_role_contain, local.st.iam_role_read,
       ]
     }
     restore = {
@@ -178,13 +191,18 @@ locals {
       statements = [
         local.st.ddb, local.st.ddb_query, local.st.s3_case_ro, local.st.s3_list, local.st.ec2_read,
         local.st.ec2_modify_instance, local.st.ec2_restore_instance, local.st.ec2_sg_attach, local.st.ec2_modify_eni,
-        local.st.iam_user_read,
+        local.st.iam_user_read, local.st.iam_user_policy_read,
         local.st.iam_user_restore, local.st.iam_role_restore, local.st.secrets_rotate,
       ]
     }
     case_ops = {
-      timeout    = 30, memory = 256
-      statements = [local.st.ddb, local.st.sns, local.st.ssm, local.st.kms_ssm]
+      timeout = 60, memory = 256 # the fail-safe reads EC2/IAM before it alerts, for at most case_ops.OBSERVE_SECONDS
+      # read-only: the fail-safe reports the containment actually in place, looked up on the resource
+      statements = [
+        local.st.ddb, local.st.ddb_query, local.st.sns, local.st.ssm, local.st.kms_ssm, local.st.s3_case_ro,
+        local.st.ec2_read, local.st.ec2_sg_read, local.st.iam_user_read, local.st.iam_user_policy_read,
+        local.st.iam_role_read,
+      ]
     }
   }
 
